@@ -4,9 +4,15 @@ tasks:
   swagger:
     desc: Generate swagger documentation
     cmds:
-      - swag init -g cmd/server/main.go
+      - swag init -g cmd/server/main.go -o cmd/swag/docs
 
   run:
+    desc: Run the server with auto-swagger update
+    deps: [swagger]
+    cmds:
+      - go run cmd/server/main.go
+
+  dev:
     desc: Run the server with auto-swagger update
     deps: [swagger]
     cmds:
@@ -17,9 +23,3 @@ tasks:
     deps: [swagger]
     cmds:
       - go build -o bin/server cmd/server/main.go
-
-  dev:
-    desc: Run the server with auto-swagger update
-    deps: [swagger]
-    cmds:
-      - go run cmd/server/main.go

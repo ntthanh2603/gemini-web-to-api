@@ -10,7 +10,7 @@ import (
 	"ai-bridges/internal/server"
 	"ai-bridges/pkg/logger"
 
-	_ "ai-bridges/docs"
+	_ "ai-bridges/cmd/swag/docs"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
