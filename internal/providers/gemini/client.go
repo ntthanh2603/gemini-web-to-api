@@ -17,31 +17,28 @@ import (
 	"sync"
 	"time"
 
+	"ai-bridges/internal/config"
 	"ai-bridges/internal/providers"
-	"ai-bridges/pkg/logger"
 
 	"github.com/imroc/req/v3"
 	"go.uber.org/zap"
 )
 
-// Client implements the Provider interface for Gemini
 type Client struct {
 	httpClient *req.Client
 	cookies    *CookieStore
-	at         string // SNlM0e token
+	at         string 
 	mu         sync.RWMutex
 	healthy    bool
+	log        *zap.Logger
 	
-	// Auto-refresh settings
 	autoRefresh     bool
 	refreshInterval time.Duration
 	stopRefresh     chan struct{}
 
-	// Request serialization
 	reqMu sync.Mutex
 }
 
-// CookieStore manages Gemini authentication cookies
 type CookieStore struct {
 	Secure1PSID   string    `json:"__Secure-1PSID"`
 	Secure1PSIDTS string    `json:"__Secure-1PSIDTS"`
@@ -50,12 +47,11 @@ type CookieStore struct {
 	mu            sync.RWMutex
 }
 
-// NewClient creates a new Gemini client
-func NewClient(secure1PSID, secure1PSIDTS, secure1PSIDCC string, refreshIntervalMinutes int) *Client {
+func NewClient(cfg *config.Config, log *zap.Logger) *Client {
 	cookies := &CookieStore{
-		Secure1PSID:   secure1PSID,
-		Secure1PSIDTS: secure1PSIDTS,
-		Secure1PSIDCC: secure1PSIDCC,
+		Secure1PSID:   cfg.Gemini.Secure1PSID,
+		Secure1PSIDTS: cfg.Gemini.Secure1PSIDTS,
+		Secure1PSIDCC: cfg.Gemini.Secure1PSIDCC,
 		UpdatedAt:     time.Now(),
 	}
 
@@ -64,8 +60,9 @@ func NewClient(secure1PSID, secure1PSIDTS, secure1PSIDCC string, refreshInterval
 		SetCommonHeaders(DefaultHeaders).
 		EnableDumpAllWithoutBody()
 
+	refreshIntervalMinutes := cfg.Gemini.RefreshInterval
 	if refreshIntervalMinutes <= 0 {
-		refreshIntervalMinutes = 30 // Increased default to 30 minutes
+		refreshIntervalMinutes = 30 
 	}
 
 	return &Client{
@@ -74,12 +71,12 @@ func NewClient(secure1PSID, secure1PSIDTS, secure1PSIDCC string, refreshInterval
 		autoRefresh:     true,
 		refreshInterval: time.Duration(refreshIntervalMinutes) * time.Minute,
 		stopRefresh:     make(chan struct{}),
+		log:             log,
 	}
 }
 
-// Init initializes the client and starts auto-refresh
 func (c *Client) Init(ctx context.Context) error {
-	// 1. Clean cookies
+	// Clean cookies
 	c.cookies.Secure1PSID = cleanCookie(c.cookies.Secure1PSID)
 	c.cookies.Secure1PSIDTS = cleanCookie(c.cookies.Secure1PSIDTS)
 	c.cookies.Secure1PSIDCC = cleanCookie(c.cookies.Secure1PSIDCC)
@@ -88,33 +85,33 @@ func (c *Client) Init(ctx context.Context) error {
 	if c.cookies.Secure1PSID != "" {
 		if cachedTS, err := c.LoadCachedCookies(); err == nil && cachedTS != "" {
 			c.cookies.Secure1PSIDTS = cachedTS
-			logger.Info("Loaded valid __Secure-1PSIDTS from local cache (overriding config)")
+			c.log.Info("Loaded valid __Secure-1PSIDTS from local cache (overriding config)")
 		}
 	}
 
-	// 2. If we still only have PSID, try to get PSIDTS through rotation (might fail if no cache)
+	// Obtain PSIDTS via rotation if missing
 	if c.cookies.Secure1PSID != "" && c.cookies.Secure1PSIDTS == "" {
-		logger.Info("Only __Secure-1PSID provided, attempting to obtain __Secure-1PSIDTS via rotation...")
+		c.log.Info("Only __Secure-1PSID provided, attempting to obtain __Secure-1PSIDTS via rotation...")
 		if err := c.RotateCookies(); err != nil {
-			logger.Info("Rotation failed, proceeding with just __Secure-1PSID (might fail)", zap.String("error", err.Error()))
+			c.log.Info("Rotation failed, proceeding with just __Secure-1PSID (might fail)", zap.String("error", err.Error()))
 		} else {
-			logger.Info("Successfully obtained __Secure-1PSIDTS via rotation")
+			c.log.Info("Successfully obtained __Secure-1PSIDTS via rotation")
 		}
 	}
 
-	// 3. Populate cookies in the main client
+	// Populate cookies
 	c.httpClient.SetCommonCookies(c.cookies.ToHTTPCookies()...)
 
-	// 4. Try to get SNlM0e token
+	// Get SNlM0e token
 	err := c.refreshSessionToken()
 	if err != nil {
-		logger.Debug("Initial session token fetch failed, attempting cookie rotation", zap.Error(err))
+		c.log.Debug("Initial session token fetch failed, attempting cookie rotation", zap.Error(err))
 		// Try to rotate cookies and retry
 		if rotErr := c.RotateCookies(); rotErr == nil {
-			logger.Debug("Cookie rotation succeeded, retrying session token fetch")
+			c.log.Debug("Cookie rotation succeeded, retrying session token fetch")
 			err = c.refreshSessionToken()
 		} else {
-			logger.Debug("Cookie rotation failed", zap.Error(rotErr))
+			c.log.Debug("Cookie rotation failed", zap.Error(rotErr))
 		}
 	}
 
@@ -125,7 +122,7 @@ func (c *Client) Init(ctx context.Context) error {
 	// Save the valid cookies to cache immediately after successful init
 	_ = c.SaveCachedCookies()
 
-	logger.Info("✅ Gemini client initialized successfully")
+	c.log.Info("✅ Gemini client initialized successfully")
 
 	// 5. Start auto-refresh in background
 	if c.autoRefresh {
@@ -270,7 +267,7 @@ func (c *Client) refreshSessionToken() error {
 			}
 
 			// Log as Info to avoid stack trace for expected auth failures
-			logger.Info(errMsg)
+			c.log.Info(errMsg)
 			return fmt.Errorf("%s", errMsg)
 		}
 	}
@@ -291,7 +288,7 @@ func (c *Client) startAutoRefresh() {
 		select {
 		case <-ticker.C:
 			if err := c.RotateCookies(); err != nil {
-				logger.Error("Cookie rotation failed", zap.Error(err))
+				c.log.Error("Cookie rotation failed", zap.Error(err))
 			}
 		case <-c.stopRefresh:
 			return
@@ -299,7 +296,6 @@ func (c *Client) startAutoRefresh() {
 	}
 }
 
-// RotateCookies refreshes the __Secure-1PSIDTS cookie
 func (c *Client) RotateCookies() error {
 	c.cookies.mu.Lock()
 	defer c.cookies.mu.Unlock()
@@ -327,18 +323,18 @@ func (c *Client) RotateCookies() error {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Cookie", cookieStr)
 
-	logger.Debug("Sending rotation request", zap.String("url", EndpointRotateCookies))
+	c.log.Debug("Sending rotation request", zap.String("url", EndpointRotateCookies))
 	hClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := hClient.Do(req)
 	if err != nil {
 		// Log as Info to avoid scary stacktraces in development mode for expected auth failures
-		logger.Info("Rotation request failed (network/auth issue)", zap.String("error", err.Error()))
+		c.log.Info("Rotation request failed (network/auth issue)", zap.String("error", err.Error()))
 		return fmt.Errorf("failed to call rotation endpoint: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Info("Rotation failed (likely invalid __Secure-1PSID)", zap.Int("status", resp.StatusCode))
+		c.log.Info("Rotation failed (likely invalid __Secure-1PSID)", zap.Int("status", resp.StatusCode))
 		return fmt.Errorf("rotation failed with status %d", resp.StatusCode)
 	}
 
@@ -360,14 +356,13 @@ func (c *Client) RotateCookies() error {
 	}
 
 	if found {
-		logger.Info("Cookie rotated successfully", zap.Time("updated_at", c.cookies.UpdatedAt))
+		c.log.Info("Cookie rotated successfully", zap.Time("updated_at", c.cookies.UpdatedAt))
 		return nil
 	}
 
 	return errors.New("no new __Secure-1PSIDTS cookie received")
 }
 
-// GetCookies returns current cookies (for client to persist)
 func (c *Client) GetCookies() *CookieStore {
 	c.cookies.mu.RLock()
 	defer c.cookies.mu.RUnlock()
@@ -379,7 +374,6 @@ func (c *Client) GetCookies() *CookieStore {
 	}
 }
 
-// GenerateContent implements Provider interface
 func (c *Client) GenerateContent(ctx context.Context, prompt string, options ...providers.GenerateOption) (*providers.Response, error) {
 	c.reqMu.Lock()
 	defer c.reqMu.Unlock()
@@ -427,7 +421,6 @@ func (c *Client) GenerateContent(ctx context.Context, prompt string, options ...
 	return c.parseResponse(resp.String())
 }
 
-// StartChat implements Provider interface
 func (c *Client) StartChat(options ...providers.ChatOption) providers.ChatSession {
 	config := &providers.ChatConfig{
 		Model: "gemini-pro",
@@ -444,7 +437,6 @@ func (c *Client) StartChat(options ...providers.ChatOption) providers.ChatSessio
 	}
 }
 
-// Close implements Provider interface
 func (c *Client) Close() error {
 	close(c.stopRefresh)
 	c.mu.Lock()
@@ -453,12 +445,10 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// GetName implements Provider interface
 func (c *Client) GetName() string {
 	return "gemini"
 }
 
-// IsHealthy implements Provider interface
 func (c *Client) IsHealthy() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -535,7 +525,6 @@ func (c *Client) parseResponse(text string) (*providers.Response, error) {
 	return nil, fmt.Errorf("failed to parse response")
 }
 
-// ToHTTPCookies converts CookieStore to HTTP cookies
 func (cs *CookieStore) ToHTTPCookies() []*http.Cookie {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
@@ -624,7 +613,7 @@ func (c *Client) SaveCachedCookies() error {
 
 	err := os.WriteFile(filename, []byte(c.cookies.Secure1PSIDTS), 0600)
 	if err == nil {
-		logger.Debug("Saved __Secure-1PSIDTS to local cache for future use", zap.String("file", filename))
+		c.log.Debug("Saved __Secure-1PSIDTS to local cache for future use", zap.String("file", filename))
 	}
 	return err
 }

@@ -5,14 +5,13 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
-// Middleware returns a fiber middleware for logging requests
-func Middleware() fiber.Handler {
+func NewMiddleware(log *zap.Logger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 		
-		// Handle the request and capture errors to set correct status codes (e.g., 404)
 		err := c.Next()
 		if err != nil {
 			if handlerErr := c.App().Config().ErrorHandler(c, err); handlerErr != nil {
@@ -28,28 +27,26 @@ func Middleware() fiber.Handler {
 		latency := stop.Sub(start)
 		ip := c.IP()
 
-		// ANSI colors
 		reset := "\033[0m"
 		
-		statusColor := "\033[32m" // Green
+		statusColor := "\033[32m" 
 		if status >= 500 {
-			statusColor = "\033[31m" // Red
+			statusColor = "\033[31m" 
 		} else if status >= 400 {
-			statusColor = "\033[33m" // Yellow
+			statusColor = "\033[33m" 
 		} else if status >= 300 {
-			statusColor = "\033[34m" // Blue
+			statusColor = "\033[34m" 
 		}
 
-		methodColor := "\033[36m" // Cyan
+		methodColor := "\033[36m" 
 		if method == "POST" {
-			methodColor = "\033[32m" // Green
+			methodColor = "\033[32m" 
 		} else if method == "PUT" || method == "PATCH" {
-			methodColor = "\033[33m" // Yellow
+			methodColor = "\033[33m" 
 		} else if method == "DELETE" {
-			methodColor = "\033[31m" // Red
+			methodColor = "\033[31m" 
 		}
 
-		// Very compact format: STATUS|LATENCY|IP|METHOD|PATH
 		msg := fmt.Sprintf("%s%d%s|%s|%s|%s%s%s|%s",
 			statusColor, status, reset,
 			latency,
@@ -58,7 +55,7 @@ func Middleware() fiber.Handler {
 			path,
 		)
 
-		Info(msg)
-		return nil // Error already handled
+		log.Info(msg)
+		return nil 
 	}
 }

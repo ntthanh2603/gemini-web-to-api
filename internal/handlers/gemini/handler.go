@@ -8,22 +8,22 @@ import (
 	"ai-bridges/internal/providers/gemini"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
-// Handler manages Gemini-specific endpoints
 type Handler struct {
 	client *gemini.Client
+	log    *zap.Logger
 	mu     sync.Mutex
 }
 
-// NewHandler creates a new Gemini handler with a shared client
-func NewHandler(client *gemini.Client) *Handler {
+func NewHandler(client *gemini.Client, log *zap.Logger) *Handler {
 	return &Handler{
 		client: client,
+		log:    log,
 	}
 }
 
-// HandleGenerate handles simple generation requests
 // @Summary Generate content with Gemini
 // @Description Generate a single response from Gemini
 // @Tags Gemini
@@ -69,7 +69,6 @@ func (h *Handler) HandleGenerate(c *fiber.Ctx) error {
 	})
 }
 
-// HandleChat handles chat session requests
 // @Summary Chat with Gemini
 // @Description Send a message in a chat session
 // @Tags Gemini
@@ -122,7 +121,6 @@ func (h *Handler) HandleChat(c *fiber.Ctx) error {
 	})
 }
 
-// HandleTranslate handles translation requests
 // @Summary Translate text with Gemini
 // @Description Translate text to a target language using Gemini
 // @Tags Gemini

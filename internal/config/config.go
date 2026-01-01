@@ -23,10 +23,11 @@ type ServerConfig struct {
 	Port string `yaml:"PORT"`
 }
 
-func Load(path string) (*Config, error) {
+func New() (*Config, error) {
+	path := "config.yml"
 	var cfg Config
 	
-	// 1. Load from YAML file if it exists
+	// Load from YAML
 	data, err := os.ReadFile(path)
 	if err == nil {
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -36,7 +37,7 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// 2. Environment variable overrides (Precedence over YAML)
+	// Environment overrides
 	override := func(envName string, target *string) {
 		if val := os.Getenv(envName); val != "" {
 			*target = val
@@ -54,12 +55,12 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// 3. Set final defaults for missing values
+	// Default values
 	if cfg.Server.Port == "" {
 		cfg.Server.Port = "3000"
 	}
 	if cfg.Gemini.RefreshInterval <= 0 {
-		cfg.Gemini.RefreshInterval = 5 // Default to 5 minutes
+		cfg.Gemini.RefreshInterval = 5
 	}
 
 	return &cfg, nil

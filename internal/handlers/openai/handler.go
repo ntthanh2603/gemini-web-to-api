@@ -9,21 +9,21 @@ import (
 	"ai-bridges/internal/providers/gemini"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
-// Handler manages OpenAI-compatible endpoints
 type Handler struct {
 	client *gemini.Client
+	log    *zap.Logger
 }
 
-// NewHandler creates a new OpenAI-compatible handler
-func NewHandler(client *gemini.Client) *Handler {
+func NewHandler(client *gemini.Client, log *zap.Logger) *Handler {
 	return &Handler{
 		client: client,
+		log:    log,
 	}
 }
 
-// HandleChatCompletions handles OpenAI chat completions
 // @Summary OpenAI-compatible chat completions
 // @Description Accepts requests in OpenAI format
 // @Tags OpenAI Compatible
@@ -98,7 +98,6 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 	return c.JSON(h.convertToOpenAIFormat(response, req.Model, req.Stream))
 }
 
-// convertToOpenAIFormat converts provider response to OpenAI format
 func (h *Handler) convertToOpenAIFormat(response *providers.Response, model string, stream bool) ChatCompletionResponse {
 	return ChatCompletionResponse{
 		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),

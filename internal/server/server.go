@@ -1,82 +1,87 @@
 package server
 
 import (
-	"log"
+	"context"
 
+	"ai-bridges/internal/config"
 	geminiHandlers "ai-bridges/internal/handlers/gemini"
 	openaiHandlers "ai-bridges/internal/handlers/openai"
-	geminiProvider "ai-bridges/internal/providers/gemini"
 	"ai-bridges/pkg/logger"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	fiberSwagger "github.com/swaggo/fiber-swagger"
+	"go.uber.org/fx"
+	"go.uber.org/zap"
 )
 
-// Server represents the API server
 type Server struct {
-	app          *fiber.App
-	geminiClient *geminiProvider.Client
+	app           *fiber.App
+	geminiHandler *geminiHandlers.Handler
+	openaiHandler *openaiHandlers.Handler
+	cfg           *config.Config
+	log           *zap.Logger
 }
 
-// New creates a new server instance
-func New(geminiClient *geminiProvider.Client) (*Server, error) {
+func New(lc fx.Lifecycle, geminiHandler *geminiHandlers.Handler, openaiHandler *openaiHandlers.Handler, cfg *config.Config, log *zap.Logger) (*Server, error) {
 	app := fiber.New(fiber.Config{
 		AppName: "AI Bridges API",
 	})
 
-	// Add global middlewares
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Requested-With",
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS, PATCH",
 	}))
-	app.Use(logger.Middleware())
+	
+	app.Use(logger.NewMiddleware(log))
 	app.Use(recover.New())
 
 	server := &Server{
-		app:          app,
-		geminiClient: geminiClient,
+		app:           app,
+		geminiHandler: geminiHandler,
+		openaiHandler: openaiHandler,
+		cfg:           cfg,
+		log:           log,
 	}
 
-	// Register routes
 	server.registerRoutes()
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			go func() {
+				if err := app.Listen(":" + cfg.Server.Port); err != nil {
+					log.Error("Failed to start server", zap.Error(err))
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return app.Shutdown()
+		},
+	})
 
 	return server, nil
 }
 
-// registerRoutes registers all API routes
 func (s *Server) registerRoutes() {
-	// Swagger documentation
 	s.app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
-	// Register provider-specific routes at root level
-	geminiHandlers.RegisterRoutes(s.app, s.geminiClient)
-	openaiHandlers.RegisterRoutes(s.app, s.geminiClient)
+	// Gemini routes
+	geminiGroup := s.app.Group("/gemini")
+	geminiGroup.Post("/generate", s.geminiHandler.HandleGenerate)
+	geminiGroup.Post("/chat", s.geminiHandler.HandleChat)
+	geminiGroup.Post("/translate", s.geminiHandler.HandleTranslate)
 
-	// Health check
+	// OpenAI routes
+	v1Group := s.app.Group("/v1")
+	v1Group.Post("/chat/completions", s.openaiHandler.HandleChatCompletions)
+
 	s.app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
 			"service": "ai-bridges",
 		})
 	})
-}
-
-// App returns the fiber app instance
-func (s *Server) App() *fiber.App {
-	return s.app
-}
-
-// Start starts the server
-func (s *Server) Start(addr string) error {
-	log.Printf("Starting server on %s", addr)
-	return s.app.Listen(addr)
-}
-
-// Shutdown gracefully shuts down the server
-func (s *Server) Shutdown() error {
-	log.Println("Shutting down server...")
-	return s.app.Shutdown()
 }
