@@ -16,10 +16,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: google-gemini/gemini-github-review@main
+      - name: Gemini AI Review
+        uses: google-gemini/gemini-github-action@v1.1.0
         with:
-          api_key: ${{ secrets.GEMINI_API_KEY }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          api-key: ${{ secrets.GEMINI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          model: "gemini-1.5-flash"
           prompt: |
             Please review the changes in this Pull Request.
             Focus on logic errors, security vulnerabilities, and performance optimizations for Go.
