@@ -47,6 +47,10 @@ type CookieStore struct {
 	mu            sync.RWMutex
 }
 
+const (
+	defaultRefreshIntervalMinutes = 30
+)
+
 func NewClient(cfg *config.Config, log *zap.Logger) *Client {
 	cookies := &CookieStore{
 		Secure1PSID:   cfg.Gemini.Secure1PSID,
@@ -62,7 +66,7 @@ func NewClient(cfg *config.Config, log *zap.Logger) *Client {
 
 	refreshIntervalMinutes := cfg.Gemini.RefreshInterval
 	if refreshIntervalMinutes <= 0 {
-		refreshIntervalMinutes = 30 
+		refreshIntervalMinutes = defaultRefreshIntervalMinutes
 	}
 
 	return &Client{

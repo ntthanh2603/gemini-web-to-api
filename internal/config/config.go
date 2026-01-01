@@ -23,6 +23,11 @@ type ServerConfig struct {
 	Port string `yaml:"PORT"`
 }
 
+const (
+	defaultServerPort            = "3000"
+	defaultGeminiRefreshInterval = 5
+)
+
 func New() (*Config, error) {
 	path := "config.yml"
 	var cfg Config
@@ -57,10 +62,10 @@ func New() (*Config, error) {
 
 	// Default values
 	if cfg.Server.Port == "" {
-		cfg.Server.Port = "3000"
+		cfg.Server.Port = defaultServerPort
 	}
 	if cfg.Gemini.RefreshInterval <= 0 {
-		cfg.Gemini.RefreshInterval = 5
+		cfg.Gemini.RefreshInterval = defaultGeminiRefreshInterval
 	}
 
 	return &cfg, nil

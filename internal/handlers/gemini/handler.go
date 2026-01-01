@@ -8,19 +8,16 @@ import (
 	"ai-bridges/internal/providers/gemini"
 
 	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
 )
 
 type Handler struct {
 	client *gemini.Client
-	log    *zap.Logger
 	mu     sync.Mutex
 }
 
-func NewHandler(client *gemini.Client, log *zap.Logger) *Handler {
+func NewHandler(client *gemini.Client) *Handler {
 	return &Handler{
 		client: client,
-		log:    log,
 	}
 }
 
