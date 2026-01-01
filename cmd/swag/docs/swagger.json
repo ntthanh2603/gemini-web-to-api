@@ -9,144 +9,6 @@
     "host": "localhost:3000",
     "basePath": "/",
     "paths": {
-        "/gemini/chat": {
-            "post": {
-                "description": "Send a message in a chat session",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Gemini"
-                ],
-                "summary": "Chat with Gemini",
-                "parameters": [
-                    {
-                        "description": "Chat request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ChatRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ChatResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/gemini/generate": {
-            "post": {
-                "description": "Generate a single response from Gemini",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Gemini"
-                ],
-                "summary": "Generate content with Gemini",
-                "parameters": [
-                    {
-                        "description": "Generate request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/gemini.GenerateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.GenerateResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/gemini/translate": {
-            "post": {
-                "description": "Translate text to a target language using Gemini",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Gemini"
-                ],
-                "summary": "Translate text with Gemini",
-                "parameters": [
-                    {
-                        "description": "Translate request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/gemini.TranslateRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.GenerateResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/chat/completions": {
             "post": {
                 "description": "Accepts requests in OpenAI format",
@@ -249,85 +111,325 @@
                     }
                 }
             }
+        },
+        "/v1beta/models": {
+            "get": {
+                "description": "Returns models supported by the Gemini provider",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Gemini v1beta"
+                ],
+                "summary": "List Gemini Models (v1beta)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini.GeminiModelsResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1beta/models/{model}:embedContent": {
+            "post": {
+                "description": "Returns vector embeddings for the provided content",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Gemini v1beta"
+                ],
+                "summary": "Embed Content (v1beta)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model name",
+                        "name": "model",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Embed request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/gemini.GeminiEmbedRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini.GeminiEmbedResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1beta/models/{model}:generateContent": {
+            "post": {
+                "description": "Compatible with official Google Gemini API",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Gemini v1beta"
+                ],
+                "summary": "Generate Content (v1beta)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model name",
+                        "name": "model",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Gemini request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/gemini.GeminiGenerateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini.GeminiGenerateResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1beta/models/{model}:streamGenerateContent": {
+            "post": {
+                "description": "Returns a stream of JSON chunks (standard Gemini format)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Gemini v1beta"
+                ],
+                "summary": "Stream Generate Content (v1beta)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model name",
+                        "name": "model",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Gemini request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/gemini.GeminiGenerateRequest"
+                        }
+                    }
+                ],
+                "responses": {}
+            }
         }
     },
     "definitions": {
-        "gemini.ChatRequest": {
+        "gemini.Candidate": {
             "type": "object",
             "properties": {
-                "message": {
+                "content": {
+                    "$ref": "#/definitions/gemini.Content"
+                },
+                "finishReason": {
                     "type": "string"
                 },
-                "metadata": {
-                    "$ref": "#/definitions/providers.SessionMetadata"
-                },
-                "model": {
-                    "type": "string"
+                "index": {
+                    "type": "integer"
                 }
             }
         },
-        "gemini.ChatResponse": {
+        "gemini.Content": {
             "type": "object",
             "properties": {
-                "history": {
+                "parts": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/providers.Message"
+                        "$ref": "#/definitions/gemini.Part"
                     }
                 },
-                "metadata": {
-                    "$ref": "#/definitions/providers.SessionMetadata"
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "gemini.EmbeddingValues": {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                }
+            }
+        },
+        "gemini.GeminiEmbedRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "$ref": "#/definitions/gemini.Content"
+                }
+            }
+        },
+        "gemini.GeminiEmbedResponse": {
+            "type": "object",
+            "properties": {
+                "embedding": {
+                    "$ref": "#/definitions/gemini.EmbeddingValues"
+                }
+            }
+        },
+        "gemini.GeminiGenerateRequest": {
+            "type": "object",
+            "properties": {
+                "contents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/gemini.Content"
+                    }
                 },
-                "response": {
-                    "type": "string"
+                "generationConfig": {
+                    "$ref": "#/definitions/gemini.GenerationConfig"
                 }
             }
         },
-        "gemini.ErrorResponse": {
+        "gemini.GeminiGenerateResponse": {
             "type": "object",
             "properties": {
-                "error": {
-                    "type": "string"
+                "candidates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/gemini.Candidate"
+                    }
+                },
+                "usageMetadata": {
+                    "$ref": "#/definitions/gemini.UsageMetadata"
                 }
             }
         },
-        "gemini.GenerateRequest": {
+        "gemini.GeminiModel": {
             "type": "object",
             "properties": {
-                "files": {
+                "description": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "inputTokenLimit": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "outputTokenLimit": {
+                    "type": "integer"
+                },
+                "supportedGenerationMethods": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
-                "message": {
-                    "type": "string"
-                },
-                "model": {
+                "version": {
                     "type": "string"
                 }
             }
         },
-        "gemini.GenerateResponse": {
+        "gemini.GeminiModelsResponse": {
             "type": "object",
             "properties": {
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/gemini.GeminiModel"
+                    }
+                }
+            }
+        },
+        "gemini.GenerationConfig": {
+            "type": "object",
+            "properties": {
+                "maxOutputTokens": {
+                    "type": "integer"
                 },
-                "response": {
+                "stopSequences": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "temperature": {
+                    "type": "number"
+                },
+                "topK": {
+                    "type": "integer"
+                },
+                "topP": {
+                    "type": "number"
+                }
+            }
+        },
+        "gemini.InlineData": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "description": "Base64",
+                    "type": "string"
+                },
+                "mimeType": {
                     "type": "string"
                 }
             }
         },
-        "gemini.TranslateRequest": {
+        "gemini.Part": {
             "type": "object",
             "properties": {
-                "message": {
-                    "type": "string"
+                "inlineData": {
+                    "$ref": "#/definitions/gemini.InlineData"
                 },
-                "target_lang": {
+                "text": {
                     "type": "string"
+                }
+            }
+        },
+        "gemini.UsageMetadata": {
+            "type": "object",
+            "properties": {
+                "candidatesTokenCount": {
+                    "type": "integer"
+                },
+                "promptTokenCount": {
+                    "type": "integer"
+                },
+                "totalTokenCount": {
+                    "type": "integer"
                 }
             }
         },
@@ -515,65 +617,6 @@
                 },
                 "total_tokens": {
                     "type": "integer"
-                }
-            }
-        },
-        "providers.Image": {
-            "type": "object",
-            "properties": {
-                "alt_text": {
-                    "type": "string"
-                },
-                "height": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "url": {
-                    "type": "string"
-                },
-                "width": {
-                    "type": "integer"
-                }
-            }
-        },
-        "providers.Message": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "images": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/providers.Image"
-                    }
-                },
-                "role": {
-                    "description": "\"user\" or \"model\"",
-                    "type": "string"
-                }
-            }
-        },
-        "providers.SessionMetadata": {
-            "type": "object",
-            "properties": {
-                "choice_id": {
-                    "type": "string"
-                },
-                "conversation_id": {
-                    "type": "string"
-                },
-                "extra": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "model": {
-                    "type": "string"
-                },
-                "response_id": {
-                    "type": "string"
                 }
             }
         }

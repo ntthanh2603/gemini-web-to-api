@@ -68,11 +68,12 @@ func New(lc fx.Lifecycle, geminiHandler *geminiHandlers.Handler, openaiHandler *
 func (s *Server) registerRoutes() {
 	s.app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
-	// Gemini routes
-	geminiGroup := s.app.Group("/gemini")
-	geminiGroup.Post("/generate", s.geminiHandler.HandleGenerate)
-	geminiGroup.Post("/chat", s.geminiHandler.HandleChat)
-	geminiGroup.Post("/translate", s.geminiHandler.HandleTranslate)
+	// Gemini v1beta routes (Standard)
+	v1betaGroup := s.app.Group("/v1beta")
+	v1betaGroup.Get("/models", s.geminiHandler.HandleV1BetaModels)
+	v1betaGroup.Post("/models/:model\\:generateContent", s.geminiHandler.HandleV1BetaGenerateContent)
+	v1betaGroup.Post("/models/:model\\:streamGenerateContent", s.geminiHandler.HandleV1BetaStreamGenerateContent)
+	v1betaGroup.Post("/models/:model\\:embedContent", s.geminiHandler.HandleV1BetaEmbedContent)
 
 	// OpenAI routes
 	v1Group := s.app.Group("/v1")

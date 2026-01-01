@@ -1,55 +1,122 @@
 basePath: /
 definitions:
-  gemini.ChatRequest:
+  gemini.Candidate:
     properties:
-      message:
+      content:
+        $ref: '#/definitions/gemini.Content'
+      finishReason:
         type: string
-      metadata:
-        $ref: '#/definitions/providers.SessionMetadata'
-      model:
-        type: string
+      index:
+        type: integer
     type: object
-  gemini.ChatResponse:
+  gemini.Content:
     properties:
-      history:
+      parts:
         items:
-          $ref: '#/definitions/providers.Message'
+          $ref: '#/definitions/gemini.Part'
         type: array
-      metadata:
-        $ref: '#/definitions/providers.SessionMetadata'
-      response:
+      role:
         type: string
     type: object
-  gemini.ErrorResponse:
+  gemini.EmbeddingValues:
     properties:
-      error:
-        type: string
+      values:
+        items:
+          type: number
+        type: array
     type: object
-  gemini.GenerateRequest:
+  gemini.GeminiEmbedRequest:
     properties:
-      files:
+      content:
+        $ref: '#/definitions/gemini.Content'
+    type: object
+  gemini.GeminiEmbedResponse:
+    properties:
+      embedding:
+        $ref: '#/definitions/gemini.EmbeddingValues'
+    type: object
+  gemini.GeminiGenerateRequest:
+    properties:
+      contents:
+        items:
+          $ref: '#/definitions/gemini.Content'
+        type: array
+      generationConfig:
+        $ref: '#/definitions/gemini.GenerationConfig'
+    type: object
+  gemini.GeminiGenerateResponse:
+    properties:
+      candidates:
+        items:
+          $ref: '#/definitions/gemini.Candidate'
+        type: array
+      usageMetadata:
+        $ref: '#/definitions/gemini.UsageMetadata'
+    type: object
+  gemini.GeminiModel:
+    properties:
+      description:
+        type: string
+      displayName:
+        type: string
+      inputTokenLimit:
+        type: integer
+      name:
+        type: string
+      outputTokenLimit:
+        type: integer
+      supportedGenerationMethods:
         items:
           type: string
         type: array
-      message:
-        type: string
-      model:
+      version:
         type: string
     type: object
-  gemini.GenerateResponse:
+  gemini.GeminiModelsResponse:
     properties:
-      metadata:
-        additionalProperties: {}
-        type: object
-      response:
+      models:
+        items:
+          $ref: '#/definitions/gemini.GeminiModel'
+        type: array
+    type: object
+  gemini.GenerationConfig:
+    properties:
+      maxOutputTokens:
+        type: integer
+      stopSequences:
+        items:
+          type: string
+        type: array
+      temperature:
+        type: number
+      topK:
+        type: integer
+      topP:
+        type: number
+    type: object
+  gemini.InlineData:
+    properties:
+      data:
+        description: Base64
+        type: string
+      mimeType:
         type: string
     type: object
-  gemini.TranslateRequest:
+  gemini.Part:
     properties:
-      message:
+      inlineData:
+        $ref: '#/definitions/gemini.InlineData'
+      text:
         type: string
-      target_lang:
-        type: string
+    type: object
+  gemini.UsageMetadata:
+    properties:
+      candidatesTokenCount:
+        type: integer
+      promptTokenCount:
+        type: integer
+      totalTokenCount:
+        type: integer
     type: object
   openai.ChatCompletionRequest:
     properties:
@@ -172,45 +239,6 @@ definitions:
       total_tokens:
         type: integer
     type: object
-  providers.Image:
-    properties:
-      alt_text:
-        type: string
-      height:
-        type: integer
-      title:
-        type: string
-      url:
-        type: string
-      width:
-        type: integer
-    type: object
-  providers.Message:
-    properties:
-      content:
-        type: string
-      images:
-        items:
-          $ref: '#/definitions/providers.Image'
-        type: array
-      role:
-        description: '"user" or "model"'
-        type: string
-    type: object
-  providers.SessionMetadata:
-    properties:
-      choice_id:
-        type: string
-      conversation_id:
-        type: string
-      extra:
-        additionalProperties: {}
-        type: object
-      model:
-        type: string
-      response_id:
-        type: string
-    type: object
 host: localhost:3000
 info:
   contact: {}
@@ -219,96 +247,6 @@ info:
   title: AI Bridges API
   version: "1.0"
 paths:
-  /gemini/chat:
-    post:
-      consumes:
-      - application/json
-      description: Send a message in a chat session
-      parameters:
-      - description: Chat request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/gemini.ChatRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/gemini.ChatResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/gemini.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/gemini.ErrorResponse'
-      summary: Chat with Gemini
-      tags:
-      - Gemini
-  /gemini/generate:
-    post:
-      consumes:
-      - application/json
-      description: Generate a single response from Gemini
-      parameters:
-      - description: Generate request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/gemini.GenerateRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/gemini.GenerateResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/gemini.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/gemini.ErrorResponse'
-      summary: Generate content with Gemini
-      tags:
-      - Gemini
-  /gemini/translate:
-    post:
-      consumes:
-      - application/json
-      description: Translate text to a target language using Gemini
-      parameters:
-      - description: Translate request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/gemini.TranslateRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/gemini.GenerateResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/gemini.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/gemini.ErrorResponse'
-      summary: Translate text with Gemini
-      tags:
-      - Gemini
   /v1/chat/completions:
     post:
       consumes:
@@ -376,4 +314,94 @@ paths:
       summary: List models
       tags:
       - OpenAI Compatible
+  /v1beta/models:
+    get:
+      description: Returns models supported by the Gemini provider
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gemini.GeminiModelsResponse'
+      summary: List Gemini Models (v1beta)
+      tags:
+      - Gemini v1beta
+  /v1beta/models/{model}:embedContent:
+    post:
+      consumes:
+      - application/json
+      description: Returns vector embeddings for the provided content
+      parameters:
+      - description: Model name
+        in: path
+        name: model
+        required: true
+        type: string
+      - description: Embed request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/gemini.GeminiEmbedRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gemini.GeminiEmbedResponse'
+      summary: Embed Content (v1beta)
+      tags:
+      - Gemini v1beta
+  /v1beta/models/{model}:generateContent:
+    post:
+      consumes:
+      - application/json
+      description: Compatible with official Google Gemini API
+      parameters:
+      - description: Model name
+        in: path
+        name: model
+        required: true
+        type: string
+      - description: Gemini request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/gemini.GeminiGenerateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/gemini.GeminiGenerateResponse'
+      summary: Generate Content (v1beta)
+      tags:
+      - Gemini v1beta
+  /v1beta/models/{model}:streamGenerateContent:
+    post:
+      consumes:
+      - application/json
+      description: Returns a stream of JSON chunks (standard Gemini format)
+      parameters:
+      - description: Model name
+        in: path
+        name: model
+        required: true
+        type: string
+      - description: Gemini request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/gemini.GeminiGenerateRequest'
+      produces:
+      - application/json
+      responses: {}
+      summary: Stream Generate Content (v1beta)
+      tags:
+      - Gemini v1beta
 swagger: "2.0"
