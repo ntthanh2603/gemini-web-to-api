@@ -7,8 +7,8 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      - GEMINI_1PSID=g.a0005Ag05-1tCoDdfOiKxYTw6stLRilvEFicAHulE92Vldio1TlISGn4tmQpIbL56klZd6h_ugACgYKAa4SARYSFQHGX2MiNIPmdTfg_qF4YmUeyrS1dhoVAUF8yKpbQxInDMsvZxDX_5RZpQ6Q0076
-      - GEMINI_1PSIDTS=sidts-CjYBflaCdZmsrJvL3EtFRpmOkO7da6kIv8THv-dZ-EXUgIb-MaGafwCE-GRuFGwkUv7aYbtbucMQAA
-      - GEMINI_1PSIDCC=AKEyXzU_kh8kt3y6S79SV-a7KhovAWR1tUaj0EMl7wx5JV6tMbQcdPritQ6XeSYfCTNWLIERUFE
+      - GEMINI_1PSID=
+      - GEMINI_1PSIDTS=
+      - GEMINI_1PSIDCC=
       - GEMINI_REFRESH_INTERVAL=30
     restart: unless-stopped

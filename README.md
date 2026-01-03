@@ -52,6 +52,14 @@ The application uses a unified configuration system with the following priority:
 | `GEMINI_REFRESH_INTERVAL` | `GEMINI_REFRESH_INTERVAL` | Rotation interval in minutes (default: 30)              |
 | `PORT`                    | `PORT`                    | Server port (default: 3000)                             |
 
+### How to get Gemini Cookies
+
+1. Go to [gemini.google.com](https://gemini.google.com)
+2. Open DevTools (F12) -> **Application** tab -> **Cookies**
+3. Find and copy values for `__Secure-1PSID` and `__Secure-1PSIDTS`
+
+![Gemini Token Guide](assets/gemini_token_guide.png)
+
 ---
 
 ## 🐳 Docker Usage (Quick Start)
@@ -165,6 +173,8 @@ python claude_client.py
 ## 📘 API Documentation
 
 Visit `http://localhost:3000/swagger/` for the full interactive API documentation.
+
+![Swagger UI](assets/swagger.png)
 
 ---
 
