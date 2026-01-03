@@ -51,6 +51,24 @@ definitions:
       usage:
         $ref: '#/definitions/claude.Usage'
     type: object
+  claude.ModelData:
+    properties:
+      created_at:
+        type: integer
+      display_name:
+        type: string
+      id:
+        type: string
+      type:
+        type: string
+    type: object
+  claude.ModelListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/claude.ModelData'
+        type: array
+    type: object
   claude.Usage:
     properties:
       input_tokens:
@@ -75,23 +93,6 @@ definitions:
         type: array
       role:
         type: string
-    type: object
-  gemini.EmbeddingValues:
-    properties:
-      values:
-        items:
-          type: number
-        type: array
-    type: object
-  gemini.GeminiEmbedRequest:
-    properties:
-      content:
-        $ref: '#/definitions/gemini.Content'
-    type: object
-  gemini.GeminiEmbedResponse:
-    properties:
-      embedding:
-        $ref: '#/definitions/gemini.EmbeddingValues'
     type: object
   gemini.GeminiGenerateRequest:
     properties:
@@ -217,36 +218,6 @@ definitions:
       message:
         $ref: '#/definitions/openai.Message'
     type: object
-  openai.Embedding:
-    properties:
-      embedding:
-        items:
-          type: number
-        type: array
-      index:
-        type: integer
-      object:
-        type: string
-    type: object
-  openai.EmbeddingsRequest:
-    properties:
-      input: {}
-      model:
-        type: string
-    type: object
-  openai.EmbeddingsResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/openai.Embedding'
-        type: array
-      model:
-        type: string
-      object:
-        type: string
-      usage:
-        $ref: '#/definitions/openai.Usage'
-    type: object
   openai.Error:
     properties:
       code:
@@ -300,8 +271,9 @@ definitions:
 host: localhost:3000
 info:
   contact: {}
-  description: WebAI-to-API service for Go - Convert web-based AI services to REST
-    APIs
+  description: "\U0001F680 High-performance WebAI-to-API gateway. Seamlessly bridge
+    Google Gemini into standardized OpenAI, Anthropic (Claude), and Google Native
+    REST APIs."
   title: AI Bridges API
   version: "1.0"
 paths:
@@ -333,28 +305,6 @@ paths:
           schema:
             $ref: '#/definitions/openai.ErrorResponse'
       summary: OpenAI-compatible chat completions
-      tags:
-      - OpenAI Compatible
-  /v1/embeddings:
-    post:
-      consumes:
-      - application/json
-      description: Converts input text to vector embeddings (Placeholder)
-      parameters:
-      - description: Embeddings request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/openai.EmbeddingsRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/openai.EmbeddingsResponse'
-      summary: Create embeddings
       tags:
       - OpenAI Compatible
   /v1/messages:
@@ -389,11 +339,34 @@ paths:
       summary: Claude-compatible chat
       tags:
       - Claude Compatible
+  /v1/messages/count_tokens:
+    post:
+      consumes:
+      - application/json
+      description: Estimates token count for a Claude request
+      parameters:
+      - description: Message request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/claude.MessageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Count tokens
+      tags:
+      - Claude Compatible
   /v1/models:
     get:
       consumes:
       - application/json
-      description: Returns a list of models supported by this server
+      description: Returns a list of models supported by the OpenAI-compatible API
       produces:
       - application/json
       responses:
@@ -401,9 +374,30 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/openai.ModelListResponse'
-      summary: List models
+      summary: List OpenAI models
       tags:
       - OpenAI Compatible
+  /v1/models/{model_id}:
+    get:
+      consumes:
+      - application/json
+      description: Returns a specific Claude model by ID
+      parameters:
+      - description: Model ID
+        in: path
+        name: model_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/claude.ModelData'
+      summary: Get Claude model by ID
+      tags:
+      - Claude Compatible
   /v1beta/models:
     get:
       description: Returns models supported by the Gemini provider
@@ -415,33 +409,6 @@ paths:
           schema:
             $ref: '#/definitions/gemini.GeminiModelsResponse'
       summary: List Gemini Models (v1beta)
-      tags:
-      - Gemini v1beta
-  /v1beta/models/{model}:embedContent:
-    post:
-      consumes:
-      - application/json
-      description: Returns vector embeddings for the provided content
-      parameters:
-      - description: Model name
-        in: path
-        name: model
-        required: true
-        type: string
-      - description: Embed request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/gemini.GeminiEmbedRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/gemini.GeminiEmbedResponse'
-      summary: Embed Content (v1beta)
       tags:
       - Gemini v1beta
   /v1beta/models/{model}:generateContent:

@@ -187,19 +187,3 @@ func (h *Handler) HandleV1BetaStreamGenerateContent(c *fiber.Ctx) error {
 	return nil
 }
 
-// HandleV1BetaEmbedContent handles the official Gemini embedding endpoint
-// @Summary Embed Content (v1beta)
-// @Description Returns vector embeddings for the provided content
-// @Tags Gemini v1beta
-// @Accept json
-// @Produce json
-// @Param model path string true "Model name"
-// @Param request body GeminiEmbedRequest true "Embed request"
-// @Success 200 {object} GeminiEmbedResponse
-// @Router /v1beta/models/{model}:embedContent [post]
-func (h *Handler) HandleV1BetaEmbedContent(c *fiber.Ctx) error {
-	vector := make([]float32, 768)
-	return c.JSON(GeminiEmbedResponse{
-		Embedding: EmbeddingValues{Values: vector},
-	})
-}

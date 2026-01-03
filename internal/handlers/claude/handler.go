@@ -24,24 +24,59 @@ func NewHandler(client *gemini.Client) *Handler {
 	}
 }
 
-// HandleModels returns a list of models
-func (h *Handler) HandleModels(c *fiber.Ctx) error {
-	// Optional but requested
-	return c.JSON(fiber.Map{
-		"data": []fiber.Map{
-			{
-				"id":           "claude-3-5-sonnet-20240620",
-				"type":         "model",
-				"created_at":   time.Now().Unix(),
-				"display_name": "Claude 3.5 Sonnet",
-			},
-			{
-				"id":           "claude-3-opus-20240229",
-				"type":         "model",
-				"created_at":   time.Now().Unix(),
-				"display_name": "Claude 3 Opus",
-			},
+// GetModelData returns raw model data for internal use (e.g. unified list)
+func (h *Handler) GetModelData() []fiber.Map {
+	return []fiber.Map{
+		{
+			"id":           "claude-3-5-sonnet-20240620",
+			"type":         "model",
+			"created_at":   1718841600,
+			"display_name": "Claude 3.5 Sonnet",
 		},
+		{
+			"id":           "claude-3-opus-20240229",
+			"type":         "model",
+			"created_at":   1709164800,
+			"display_name": "Claude 3 Opus",
+		},
+		{
+			"id":           "claude-3-7-sonnet-20250219",
+			"type":         "model",
+			"created_at":   1739923200,
+			"display_name": "Claude 3.7 Sonnet",
+		},
+	}
+}
+
+// HandleModels returns a list of models
+// @Summary List Claude models (Internal)
+// @Description Returns a list of Claude models
+// @Tags Claude Compatible
+// @Accept json
+// @Produce json
+// @Success 200 {object} ModelListResponse
+func (h *Handler) HandleModels(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"data": h.GetModelData(),
+	})
+}
+
+// HandleModelByID returns details of a specific model
+// @Summary Get Claude model by ID
+// @Description Returns a specific Claude model by ID
+// @Tags Claude Compatible
+// @Accept json
+// @Produce json
+// @Param model_id path string true "Model ID"
+// @Success 200 {object} ModelData
+// @Router /v1/models/{model_id} [get]
+func (h *Handler) HandleModelByID(c *fiber.Ctx) error {
+	modelID := c.Params("model_id")
+	return c.JSON(fiber.Map{
+		"id":           modelID,
+		"type":         "model",
+		"created_at":   time.Now().Unix(),
+		"display_name": modelID,
 	})
 }
 
@@ -177,6 +212,35 @@ func (h *Handler) HandleMessages(c *fiber.Ctx) error {
 			InputTokens:  15, 
 			OutputTokens: len(response.Text) / 4,
 		},
+	})
+}
+
+// HandleCountTokens handles token counting
+// @Summary Count tokens
+// @Description Estimates token count for a Claude request
+// @Tags Claude Compatible
+// @Accept json
+// @Produce json
+// @Param request body MessageRequest true "Message request"
+// @Success 200 {object} map[string]interface{}
+// @Router /v1/messages/count_tokens [post]
+func (h *Handler) HandleCountTokens(c *fiber.Ctx) error {
+	var req MessageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"type":  "error",
+			"error": fiber.Map{"type": "invalid_request_error", "message": "Invalid JSON body"},
+		})
+	}
+
+	// Simple estimation
+	totalChars := len(req.System)
+	for _, m := range req.Messages {
+		totalChars += len(m.Content)
+	}
+
+	return c.JSON(fiber.Map{
+		"input_tokens": totalChars / 4,
 	})
 }
 

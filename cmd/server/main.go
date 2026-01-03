@@ -19,7 +19,7 @@ import (
 
 // @title AI Bridges API
 // @version 1.0
-// @description WebAI-to-API service for Go - Convert web-based AI services to REST APIs
+// @description 🚀 High-performance WebAI-to-API gateway. Seamlessly bridge Google Gemini into standardized OpenAI, Anthropic (Claude), and Google Native REST APIs.
 // @host localhost:3000
 // @BasePath /
 func main() {

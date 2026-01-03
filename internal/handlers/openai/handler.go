@@ -23,15 +23,8 @@ func NewHandler(client *gemini.Client) *Handler {
 	}
 }
 
-// HandleModels returns the list of supported models
-// @Summary List models
-// @Description Returns a list of models supported by this server
-// @Tags OpenAI Compatible
-// @Accept json
-// @Produce json
-// @Success 200 {object} ModelListResponse
-// @Router /v1/models [get]
-func (h *Handler) HandleModels(c *fiber.Ctx) error {
+// GetModelData returns raw model data for internal use (e.g. unified list)
+func (h *Handler) GetModelData() []ModelData {
 	availableModels := h.client.ListModels()
 
 	var data []ModelData
@@ -43,6 +36,19 @@ func (h *Handler) HandleModels(c *fiber.Ctx) error {
 			OwnedBy: m.OwnedBy,
 		})
 	}
+	return data
+}
+
+// HandleModels returns the list of supported models
+// @Summary List OpenAI models
+// @Description Returns a list of models supported by the OpenAI-compatible API
+// @Tags OpenAI Compatible
+// @Accept json
+// @Produce json
+// @Success 200 {object} ModelListResponse
+// @Router /v1/models [get]
+func (h *Handler) HandleModels(c *fiber.Ctx) error {
+	data := h.GetModelData()
 
 	return c.JSON(ModelListResponse{
 		Object: "list",
@@ -50,40 +56,6 @@ func (h *Handler) HandleModels(c *fiber.Ctx) error {
 	})
 }
 
-// HandleEmbeddings converts text to vector numbers
-// @Summary Create embeddings
-// @Description Converts input text to vector embeddings (Placeholder)
-// @Tags OpenAI Compatible
-// @Accept json
-// @Produce json
-// @Param request body EmbeddingsRequest true "Embeddings request"
-// @Success 200 {object} EmbeddingsResponse
-// @Router /v1/embeddings [post]
-func (h *Handler) HandleEmbeddings(c *fiber.Ctx) error {
-	var req EmbeddingsRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
-			Error: Error{Message: "Invalid request body", Type: "invalid_request_error"},
-		})
-	}
-
-	// Just return a zero vector of size 1536 (OpenAI standard) as a placeholder
-	// In a real scenario, we would use Gemini's embedding API.
-	vector := make([]float32, 1536)
-	
-	return c.JSON(EmbeddingsResponse{
-		Object: "list",
-		Data: []Embedding{
-			{
-				Object:    "embedding",
-				Index:     0,
-				Embedding: vector,
-			},
-		},
-		Model: req.Model,
-		Usage: Usage{PromptTokens: 0, TotalTokens: 0},
-	})
-}
 
 // HandleChatCompletions accepts requests in OpenAI format
 // @Summary OpenAI-compatible chat completions

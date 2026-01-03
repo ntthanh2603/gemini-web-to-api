@@ -61,40 +61,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/embeddings": {
-            "post": {
-                "description": "Converts input text to vector embeddings (Placeholder)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "OpenAI Compatible"
-                ],
-                "summary": "Create embeddings",
-                "parameters": [
-                    {
-                        "description": "Embeddings request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/openai.EmbeddingsRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/openai.EmbeddingsResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/v1/messages": {
             "post": {
                 "description": "Accepts requests in Anthropic Claude format",
@@ -143,9 +109,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/messages/count_tokens": {
+            "post": {
+                "description": "Estimates token count for a Claude request",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Claude Compatible"
+                ],
+                "summary": "Count tokens",
+                "parameters": [
+                    {
+                        "description": "Message request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/claude.MessageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/v1/models": {
             "get": {
-                "description": "Returns a list of models supported by this server",
+                "description": "Returns a list of models supported by the OpenAI-compatible API",
                 "consumes": [
                     "application/json"
                 ],
@@ -155,12 +156,44 @@ const docTemplate = `{
                 "tags": [
                     "OpenAI Compatible"
                 ],
-                "summary": "List models",
+                "summary": "List OpenAI models",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/openai.ModelListResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/models/{model_id}": {
+            "get": {
+                "description": "Returns a specific Claude model by ID",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Claude Compatible"
+                ],
+                "summary": "Get Claude model by ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model ID",
+                        "name": "model_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/claude.ModelData"
                         }
                     }
                 }
@@ -181,47 +214,6 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/gemini.GeminiModelsResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1beta/models/{model}:embedContent": {
-            "post": {
-                "description": "Returns vector embeddings for the provided content",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Gemini v1beta"
-                ],
-                "summary": "Embed Content (v1beta)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Model name",
-                        "name": "model",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Embed request",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/gemini.GeminiEmbedRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/gemini.GeminiEmbedResponse"
                         }
                     }
                 }
@@ -381,6 +373,34 @@ const docTemplate = `{
                 }
             }
         },
+        "claude.ModelData": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "integer"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "claude.ModelListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/claude.ModelData"
+                    }
+                }
+            }
+        },
         "claude.Usage": {
             "type": "object",
             "properties": {
@@ -417,33 +437,6 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
-                }
-            }
-        },
-        "gemini.EmbeddingValues": {
-            "type": "object",
-            "properties": {
-                "values": {
-                    "type": "array",
-                    "items": {
-                        "type": "number"
-                    }
-                }
-            }
-        },
-        "gemini.GeminiEmbedRequest": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "$ref": "#/definitions/gemini.Content"
-                }
-            }
-        },
-        "gemini.GeminiEmbedResponse": {
-            "type": "object",
-            "properties": {
-                "embedding": {
-                    "$ref": "#/definitions/gemini.EmbeddingValues"
                 }
             }
         },
@@ -638,52 +631,6 @@ const docTemplate = `{
                 }
             }
         },
-        "openai.Embedding": {
-            "type": "object",
-            "properties": {
-                "embedding": {
-                    "type": "array",
-                    "items": {
-                        "type": "number"
-                    }
-                },
-                "index": {
-                    "type": "integer"
-                },
-                "object": {
-                    "type": "string"
-                }
-            }
-        },
-        "openai.EmbeddingsRequest": {
-            "type": "object",
-            "properties": {
-                "input": {},
-                "model": {
-                    "type": "string"
-                }
-            }
-        },
-        "openai.EmbeddingsResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/openai.Embedding"
-                    }
-                },
-                "model": {
-                    "type": "string"
-                },
-                "object": {
-                    "type": "string"
-                },
-                "usage": {
-                    "$ref": "#/definitions/openai.Usage"
-                }
-            }
-        },
         "openai.Error": {
             "type": "object",
             "properties": {
@@ -772,7 +719,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "AI Bridges API",
-	Description:      "WebAI-to-API service for Go - Convert web-based AI services to REST APIs",
+	Description:      "🚀 High-performance WebAI-to-API gateway. Seamlessly bridge Google Gemini into standardized OpenAI, Anthropic (Claude), and Google Native REST APIs.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

@@ -71,22 +71,21 @@ func New(lc fx.Lifecycle, geminiHandler *geminiHandlers.Handler, openaiHandler *
 func (s *Server) registerRoutes() {
 	s.app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
-	// Gemini v1beta routes (Standard)
+	// Gemini v1beta routes
 	v1betaGroup := s.app.Group("/v1beta")
 	v1betaGroup.Get("/models", s.geminiHandler.HandleV1BetaModels)
 	v1betaGroup.Post("/models/:model\\:generateContent", s.geminiHandler.HandleV1BetaGenerateContent)
 	v1betaGroup.Post("/models/:model\\:streamGenerateContent", s.geminiHandler.HandleV1BetaStreamGenerateContent)
-	v1betaGroup.Post("/models/:model\\:embedContent", s.geminiHandler.HandleV1BetaEmbedContent)
 
 	// OpenAI routes
 	v1Group := s.app.Group("/v1")
 	v1Group.Get("/models", s.openaiHandler.HandleModels)
 	v1Group.Post("/chat/completions", s.openaiHandler.HandleChatCompletions)
-	v1Group.Post("/embeddings", s.openaiHandler.HandleEmbeddings)
 
 	// Claude routes
 	v1Group.Post("/messages", s.claudeHandler.HandleMessages)
-	v1Group.Get("/messages", func(c *fiber.Ctx) error { return c.SendStatus(405) }) // Method Not Allowed for GET
+	v1Group.Post("/messages/count_tokens", s.claudeHandler.HandleCountTokens)
+	v1Group.Get("/models/:model_id", s.claudeHandler.HandleModelByID)
 
 	s.app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -95,3 +94,4 @@ func (s *Server) registerRoutes() {
 		})
 	})
 }
+
