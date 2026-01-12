@@ -8,8 +8,15 @@ import (
 )
 
 type Config struct {
-	Gemini GeminiConfig `yaml:"gemini"`
-	Server ServerConfig `yaml:"server"`
+	Providers ProvidersConfig `yaml:"providers"`
+	Gemini    GeminiConfig    `yaml:"gemini"`
+	Claude    ClaudeConfig    `yaml:"claude"`
+	OpenAI    OpenAIConfig    `yaml:"openai"`
+	Server    ServerConfig    `yaml:"server"`
+}
+
+type ProvidersConfig struct {
+	ProviderType string `yaml:"provider_type"`
 }
 
 type GeminiConfig struct {
@@ -17,6 +24,19 @@ type GeminiConfig struct {
 	Secure1PSIDTS   string `yaml:"GEMINI_1PSIDTS"`
 	Secure1PSIDCC   string `yaml:"GEMINI_1PSIDCC"`
 	RefreshInterval int    `yaml:"GEMINI_REFRESH_INTERVAL"`
+	Cookies         string `yaml:"cookies"`
+}
+
+type ClaudeConfig struct {
+	APIKey  string `yaml:"CLAUDE_API_KEY"`
+	Model   string `yaml:"CLAUDE_MODEL"`
+	Cookies string `yaml:"cookies"`
+}
+
+type OpenAIConfig struct {
+	APIKey  string `yaml:"OPENAI_API_KEY"`
+	Model   string `yaml:"OPENAI_MODEL"`
+	Cookies string `yaml:"cookies"`
 }
 
 type ServerConfig struct {
@@ -26,6 +46,7 @@ type ServerConfig struct {
 const (
 	defaultServerPort            = "3000"
 	defaultGeminiRefreshInterval = 5
+	defaultProviderType          = "gemini"
 )
 
 func New() (*Config, error) {
@@ -49,9 +70,17 @@ func New() (*Config, error) {
 		}
 	}
 
+	override("PROVIDER_TYPE", &cfg.Providers.ProviderType)
 	override("GEMINI_1PSID", &cfg.Gemini.Secure1PSID)
 	override("GEMINI_1PSIDTS", &cfg.Gemini.Secure1PSIDTS)
 	override("GEMINI_1PSIDCC", &cfg.Gemini.Secure1PSIDCC)
+	override("GEMINI_COOKIES", &cfg.Gemini.Cookies)
+	override("CLAUDE_API_KEY", &cfg.Claude.APIKey)
+	override("CLAUDE_MODEL", &cfg.Claude.Model)
+	override("CLAUDE_COOKIES", &cfg.Claude.Cookies)
+	override("OPENAI_API_KEY", &cfg.OpenAI.APIKey)
+	override("OPENAI_MODEL", &cfg.OpenAI.Model)
+	override("OPENAI_COOKIES", &cfg.OpenAI.Cookies)
 	override("PORT", &cfg.Server.Port)
 
 	if refresh := os.Getenv("GEMINI_REFRESH_INTERVAL"); refresh != "" {
@@ -64,9 +93,13 @@ func New() (*Config, error) {
 	if cfg.Server.Port == "" {
 		cfg.Server.Port = defaultServerPort
 	}
+	if cfg.Providers.ProviderType == "" {
+		cfg.Providers.ProviderType = defaultProviderType
+	}
 	if cfg.Gemini.RefreshInterval <= 0 {
 		cfg.Gemini.RefreshInterval = defaultGeminiRefreshInterval
 	}
 
 	return &cfg, nil
 }
+

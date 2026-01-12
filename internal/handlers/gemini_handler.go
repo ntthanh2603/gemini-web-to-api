@@ -1,4 +1,4 @@
-package gemini
+package handlers
 
 import (
 	"bufio"
@@ -7,19 +7,20 @@ import (
 	"sync"
 	"time"
 
+	"ai-bridges/internal/models"
 	"ai-bridges/internal/providers"
 	"ai-bridges/internal/providers/gemini"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-type Handler struct {
+type GeminiHandler struct {
 	client *gemini.Client
 	mu     sync.Mutex
 }
 
-func NewHandler(client *gemini.Client) *Handler {
-	return &Handler{
+func NewGeminiHandler(client *gemini.Client) *GeminiHandler {
+	return &GeminiHandler{
 		client: client,
 	}
 }
@@ -27,40 +28,25 @@ func NewHandler(client *gemini.Client) *Handler {
 // --- Official Gemini API (v1beta) ---
 
 // HandleV1BetaModels returns the list of models in Gemini format
-// @Summary List Gemini Models (v1beta)
-// @Description Returns models supported by the Gemini provider
-// @Tags Gemini v1beta
-// @Produce json
-// @Success 200 {object} GeminiModelsResponse
-// @Router /v1beta/models [get]
-func (h *Handler) HandleV1BetaModels(c *fiber.Ctx) error {
-	models := h.client.ListModels()
-	var geminiModels []GeminiModel
-	for _, m := range models {
-		geminiModels = append(geminiModels, GeminiModel{
+func (h *GeminiHandler) HandleV1BetaModels(c *fiber.Ctx) error {
+	availableModels := h.client.ListModels()
+	var geminiModels []models.GeminiModel
+	for _, m := range availableModels {
+		geminiModels = append(geminiModels, models.GeminiModel{
 			Name:                       "models/" + m.ID,
 			DisplayName:               m.ID,
 			SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent"},
 		})
 	}
-	return c.JSON(GeminiModelsResponse{Models: geminiModels})
+	return c.JSON(models.GeminiModelsResponse{Models: geminiModels})
 }
 
 // HandleV1BetaGenerateContent handles the official Gemini generateContent endpoint
-// @Summary Generate Content (v1beta)
-// @Description Compatible with official Google Gemini API
-// @Tags Gemini v1beta
-// @Accept json
-// @Produce json
-// @Param model path string true "Model name"
-// @Param request body GeminiGenerateRequest true "Gemini request"
-// @Success 200 {object} GeminiGenerateResponse
-// @Router /v1beta/models/{model}:generateContent [post]
-func (h *Handler) HandleV1BetaGenerateContent(c *fiber.Ctx) error {
+func (h *GeminiHandler) HandleV1BetaGenerateContent(c *fiber.Ctx) error {
 	model := c.Params("model")
-	var req GeminiGenerateRequest
+	var req models.GeminiGenerateRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{Error: "Invalid request body"})
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{Error: "Invalid request body"})
 	}
 
 	// Extract prompt from contents
@@ -76,47 +62,39 @@ func (h *Handler) HandleV1BetaGenerateContent(c *fiber.Ctx) error {
 
 	prompt := strings.TrimSpace(promptBuilder.String())
 	if prompt == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{Error: "Empty content"})
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{Error: models.Error{Message: "Empty content", Type: "invalid_request_error"}})
 	}
 
 	opts := []providers.GenerateOption{providers.WithModel(model)}
 
 	response, err := h.client.GenerateContent(c.Context(), prompt, opts...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{Error: err.Error()})
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{Error: models.Error{Message: err.Error(), Type: "api_error"}})
 	}
 
-	return c.JSON(GeminiGenerateResponse{
-		Candidates: []Candidate{
+	return c.JSON(models.GeminiGenerateResponse{
+		Candidates: []models.Candidate{
 			{
 				Index: 0,
-				Content: Content{
+				Content: models.Content{
 					Role:  "model",
-					Parts: []Part{{Text: response.Text}},
+					Parts: []models.Part{{Text: response.Text}},
 				},
 				FinishReason: "STOP",
 			},
 		},
-		UsageMetadata: &UsageMetadata{
+		UsageMetadata: &models.UsageMetadata{
 			TotalTokenCount: 0,
 		},
 	})
 }
 
 // HandleV1BetaStreamGenerateContent handles the official Gemini streaming endpoint
-// @Summary Stream Generate Content (v1beta)
-// @Description Returns a stream of JSON chunks (standard Gemini format)
-// @Tags Gemini v1beta
-// @Accept json
-// @Produce json
-// @Param model path string true "Model name"
-// @Param request body GeminiGenerateRequest true "Gemini request"
-// @Router /v1beta/models/{model}:streamGenerateContent [post]
-func (h *Handler) HandleV1BetaStreamGenerateContent(c *fiber.Ctx) error {
+func (h *GeminiHandler) HandleV1BetaStreamGenerateContent(c *fiber.Ctx) error {
 	model := c.Params("model")
-	var req GeminiGenerateRequest
+	var req models.GeminiGenerateRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{Error: "Invalid request body"})
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{Error: "Invalid request body"})
 	}
 
 	var promptBuilder strings.Builder
@@ -138,7 +116,7 @@ func (h *Handler) HandleV1BetaStreamGenerateContent(c *fiber.Ctx) error {
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		resp, err := h.client.GenerateContent(c.Context(), prompt, opts...)
 		if err != nil {
-			errData, _ := json.Marshal(ErrorResponse{Error: err.Error()})
+			errData, _ := json.Marshal(models.ErrorResponse{Error: err.Error()})
 			w.Write(errData)
 			w.Flush()
 			return
@@ -151,13 +129,13 @@ func (h *Handler) HandleV1BetaStreamGenerateContent(c *fiber.Ctx) error {
 				content += " "
 			}
 
-			chunk := GeminiGenerateResponse{
-				Candidates: []Candidate{
+			chunk := models.GeminiGenerateResponse{
+				Candidates: []models.Candidate{
 					{
 						Index: 0,
-						Content: Content{
+						Content: models.Content{
 							Role:  "model",
-							Parts: []Part{{Text: content}},
+							Parts: []models.Part{{Text: content}},
 						},
 					},
 				},
@@ -170,8 +148,8 @@ func (h *Handler) HandleV1BetaStreamGenerateContent(c *fiber.Ctx) error {
 			time.Sleep(30 * time.Millisecond)
 		}
 
-		finalChunk := GeminiGenerateResponse{
-			Candidates: []Candidate{
+		finalChunk := models.GeminiGenerateResponse{
+			Candidates: []models.Candidate{
 				{
 					Index:        0,
 					FinishReason: "STOP",

@@ -1,4 +1,4 @@
-package openai
+package handlers
 
 import (
 	"bufio"
@@ -7,29 +7,30 @@ import (
 	"strings"
 	"time"
 
+	"ai-bridges/internal/models"
 	"ai-bridges/internal/providers"
 	"ai-bridges/internal/providers/gemini"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-type Handler struct {
+type OpenAIHandler struct {
 	client *gemini.Client
 }
 
-func NewHandler(client *gemini.Client) *Handler {
-	return &Handler{
+func NewOpenAIHandler(client *gemini.Client) *OpenAIHandler {
+	return &OpenAIHandler{
 		client: client,
 	}
 }
 
 // GetModelData returns raw model data for internal use (e.g. unified list)
-func (h *Handler) GetModelData() []ModelData {
+func (h *OpenAIHandler) GetModelData() []models.ModelData {
 	availableModels := h.client.ListModels()
 
-	var data []ModelData
+	var data []models.ModelData
 	for _, m := range availableModels {
-		data = append(data, ModelData{
+		data = append(data, models.ModelData{
 			ID:      m.ID,
 			Object:  "model",
 			Created: m.Created,
@@ -40,17 +41,10 @@ func (h *Handler) GetModelData() []ModelData {
 }
 
 // HandleModels returns the list of supported models
-// @Summary List OpenAI models
-// @Description Returns a list of models supported by the OpenAI-compatible API
-// @Tags OpenAI Compatible
-// @Accept json
-// @Produce json
-// @Success 200 {object} ModelListResponse
-// @Router /v1/models [get]
-func (h *Handler) HandleModels(c *fiber.Ctx) error {
+func (h *OpenAIHandler) HandleModels(c *fiber.Ctx) error {
 	data := h.GetModelData()
 
-	return c.JSON(ModelListResponse{
+	return c.JSON(models.ModelListResponse{
 		Object: "list",
 		Data:   data,
 	})
@@ -58,27 +52,17 @@ func (h *Handler) HandleModels(c *fiber.Ctx) error {
 
 
 // HandleChatCompletions accepts requests in OpenAI format
-// @Summary OpenAI-compatible chat completions
-// @Description Accepts requests in OpenAI format
-// @Tags OpenAI Compatible
-// @Accept json
-// @Produce json
-// @Param request body ChatCompletionRequest true "Chat request"
-// @Success 200 {object} ChatCompletionResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /v1/chat/completions [post]
-func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
+func (h *OpenAIHandler) HandleChatCompletions(c *fiber.Ctx) error {
 	// 1. Handle Authorization (accept but not strictly required for internal use)
 	authHeader := c.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") && authHeader != "" {
 		// Log warning or handle as needed
 	}
 
-	var req ChatCompletionRequest
+	var req models.ChatCompletionRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
-			Error: Error{
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error: models.Error{
 				Message: "Invalid request body",
 				Type:    "invalid_request_error",
 				Code:    "invalid_request",
@@ -100,8 +84,11 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 	
 	prompt := promptBuilder.String()
 	if prompt == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
-			Error: Error{Message: "No messages found", Type: "invalid_request_error"},
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error: models.Error{
+				Message: "No messages found",
+				Type:    "invalid_request_error",
+			},
 		})
 	}
 
@@ -123,7 +110,7 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 			response, err := h.client.GenerateContent(c.Context(), prompt, opts...)
 			if err != nil {
-				errData, _ := json.Marshal(ErrorResponse{Error: Error{Message: err.Error()}})
+				errData, _ := json.Marshal(models.ErrorResponse{Error: models.Error{Message: err.Error(), Type: "api_error"}})
 				fmt.Fprintf(w, "data: %s\n\n", string(errData))
 				w.Flush()
 				return
@@ -142,15 +129,15 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 					content += " "
 				}
 
-				chunk := ChatCompletionChunk{
+				chunk := models.ChatCompletionChunk{
 					ID:      id,
 					Object:  "chat.completion.chunk",
 					Created: created,
 					Model:   req.Model,
-					Choices: []ChunkChoice{
+					Choices: []models.ChunkChoice{
 						{
 							Index: 0,
-							Delta: Delta{Content: content},
+							Delta: models.Delta{Content: content},
 						},
 					},
 				}
@@ -164,15 +151,15 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 			}
 
 			// Send final chunk with finish_reason
-			finalChunk := ChatCompletionChunk{
+			finalChunk := models.ChatCompletionChunk{
 				ID:      id,
 				Object:  "chat.completion.chunk",
 				Created: created,
 				Model:   req.Model,
-				Choices: []ChunkChoice{
+				Choices: []models.ChunkChoice{
 					{
 						Index:        0,
-						Delta:        Delta{},
+						Delta:        models.Delta{},
 						FinishReason: "stop",
 					},
 				},
@@ -188,8 +175,8 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 	// 4. Non-streaming response
 	response, err := h.client.GenerateContent(c.Context(), prompt, opts...)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
-			Error: Error{
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error: models.Error{
 				Message: "Generation failed: " + err.Error(),
 				Type:    "api_error",
 			},
@@ -199,23 +186,23 @@ func (h *Handler) HandleChatCompletions(c *fiber.Ctx) error {
 	return c.JSON(h.convertToOpenAIFormat(response, req.Model))
 }
 
-func (h *Handler) convertToOpenAIFormat(response *providers.Response, model string) ChatCompletionResponse {
-	return ChatCompletionResponse{
+func (h *OpenAIHandler) convertToOpenAIFormat(response *providers.Response, model string) models.ChatCompletionResponse {
+	return models.ChatCompletionResponse{
 		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
 		Model:   model,
-		Choices: []Choice{
+		Choices: []models.Choice{
 			{
 				Index: 0,
-				Message: Message{
+				Message: models.Message{
 					Role:    "assistant",
 					Content: response.Text,
 				},
 				FinishReason: "stop",
 			},
 		},
-		Usage: Usage{
+		Usage: models.Usage{
 			PromptTokens:     0,
 			CompletionTokens: 0,
 			TotalTokens:      0,

@@ -1,4 +1,4 @@
-package claude
+package handlers
 
 import (
 	"bufio"
@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-bridges/internal/models"
 	"ai-bridges/internal/providers"
 	"ai-bridges/internal/providers/gemini"
 
@@ -14,63 +15,46 @@ import (
 	"github.com/google/uuid"
 )
 
-type Handler struct {
+type ClaudeHandler struct {
 	client *gemini.Client
 }
 
-func NewHandler(client *gemini.Client) *Handler {
-	return &Handler{
+func NewClaudeHandler(client *gemini.Client) *ClaudeHandler {
+	return &ClaudeHandler{
 		client: client,
 	}
 }
 
-// GetModelData returns raw model data for internal use (e.g. unified list)
-func (h *Handler) GetModelData() []fiber.Map {
-	return []fiber.Map{
-		{
-			"id":           "claude-3-5-sonnet-20240620",
-			"type":         "model",
-			"created_at":   1718841600,
-			"display_name": "Claude 3.5 Sonnet",
-		},
-		{
-			"id":           "claude-3-opus-20240229",
-			"type":         "model",
-			"created_at":   1709164800,
-			"display_name": "Claude 3 Opus",
-		},
-		{
-			"id":           "claude-3-7-sonnet-20250219",
-			"type":         "model",
-			"created_at":   1739923200,
-			"display_name": "Claude 3.7 Sonnet",
-		},
-	}
-}
+// GetModelData moved to models_handlers.go
 
-// HandleModels returns a list of models
-// @Summary List Claude models (Internal)
-// @Description Returns a list of Claude models
-// @Tags Claude Compatible
-// @Accept json
-// @Produce json
-// @Success 200 {object} ModelListResponse
-func (h *Handler) HandleModels(c *fiber.Ctx) error {
+// HandleModels returns a list of Claude models
+func (h *ClaudeHandler) HandleModels(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
-		"data": h.GetModelData(),
+		"data": []fiber.Map{
+			{
+				"id":           "claude-3-5-sonnet-20240620",
+				"type":         "model",
+				"created_at":   1718841600,
+				"display_name": "Claude 3.5 Sonnet",
+			},
+			{
+				"id":           "claude-3-opus-20240229",
+				"type":         "model",
+				"created_at":   1709164800,
+				"display_name": "Claude 3 Opus",
+			},
+			{
+				"id":           "claude-3-7-sonnet-20250219",
+				"type":         "model",
+				"created_at":   1739923200,
+				"display_name": "Claude 3.7 Sonnet",
+			},
+		},
 	})
 }
 
-// HandleModelByID returns details of a specific model
-// @Summary Get Claude model by ID
-// @Description Returns a specific Claude model by ID
-// @Tags Claude Compatible
-// @Accept json
-// @Produce json
-// @Param model_id path string true "Model ID"
-// @Success 200 {object} ModelData
-// @Router /v1/models/{model_id} [get]
-func (h *Handler) HandleModelByID(c *fiber.Ctx) error {
+// HandleModelByID returns a specific Claude model by ID
+func (h *ClaudeHandler) HandleModelByID(c *fiber.Ctx) error {
 	modelID := c.Params("model_id")
 	return c.JSON(fiber.Map{
 		"id":           modelID,
@@ -80,25 +64,18 @@ func (h *Handler) HandleModelByID(c *fiber.Ctx) error {
 	})
 }
 
-// HandleMessages handles the main chat endpoint
-// @Summary Claude-compatible chat
-// @Description Accepts requests in Anthropic Claude format
-// @Tags Claude Compatible
-// @Accept json
-// @Produce json
-// @Param request body MessageRequest true "Message request"
-// @Success 200 {object} MessageResponse
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /v1/messages [post]
-func (h *Handler) HandleMessages(c *fiber.Ctx) error {
+// Model handlers moved to models_handlers.go
+
+
+// HandleMessages handles the main chat endpoint (logic only; Swagger lives in controllers)
+func (h *ClaudeHandler) HandleMessages(c *fiber.Ctx) error {
 	// x-api-key check (loose check)
 	if c.Get("x-api-key") == "" {
 		// Proceed even if missing
 	}
 
 
-	var req MessageRequest
+	var req models.MessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"type":  "error",
@@ -120,7 +97,6 @@ func (h *Handler) HandleMessages(c *fiber.Ctx) error {
 		promptBuilder.WriteString(fmt.Sprintf("%s: %s\n", role, msg.Content))
 	}
 	prompt := promptBuilder.String()
-
 	var opts []providers.GenerateOption // Declared once here
 	// Map Claude model to Gemini model if needed, or just pass valid gemini model
 	// For now we use default or stick to what openai handler does.
@@ -155,13 +131,13 @@ func (h *Handler) HandleMessages(c *fiber.Ctx) error {
 			// Simulate Streaming
 			sendEvent(w, "message_start", fiber.Map{
 				"type": "message_start",
-				"message": MessageResponse{
+				"message": models.MessageResponse{
 					ID:    msgID,
 					Type:  "message",
 					Role:  "assistant",
 					Model: req.Model,
-					Usage: Usage{InputTokens: 10, OutputTokens: 1}, 
-					Content: []ConfigContent{}, 
+					Usage: models.Usage{InputTokens: 10, OutputTokens: 1}, 
+					Content: []models.ConfigContent{}, 
 					StopReason: "",
 				},
 			})
@@ -169,7 +145,7 @@ func (h *Handler) HandleMessages(c *fiber.Ctx) error {
 			sendEvent(w, "content_block_start", fiber.Map{
 				"type": "content_block_start",
 				"index": 0,
-				"content_block": ConfigContent{Type: "text", Text: ""},
+				"content_block": models.ConfigContent{Type: "text", Text: ""},
 			})
 
 			// Simulated chunks
@@ -178,7 +154,7 @@ func (h *Handler) HandleMessages(c *fiber.Ctx) error {
 				sendEvent(w, "content_block_delta", fiber.Map{
 					"type": "content_block_delta",
 					"index": 0,
-					"delta": Delta{Type: "text_delta", Text: word + " "},
+					"delta": models.Delta{Type: "text_delta", Text: word + " "},
 				})
 				time.Sleep(20 * time.Millisecond)
 			}
@@ -199,33 +175,25 @@ func (h *Handler) HandleMessages(c *fiber.Ctx) error {
 	}
 
 	// Construct Response
-	content := []ConfigContent{{Type: "text", Text: response.Text}}
+	content := []models.ConfigContent{{Type: "text", Text: response.Text}}
 	
-	return c.JSON(MessageResponse{
+	return c.JSON(models.MessageResponse{
 		ID:         msgID,
 		Type:       "message",
 		Role:       "assistant",
 		Model:      req.Model,
 		Content:    content,
 		StopReason: "end_turn",
-		Usage: Usage{
+		Usage: models.Usage{
 			InputTokens:  15, 
 			OutputTokens: len(response.Text) / 4,
 		},
 	})
 }
 
-// HandleCountTokens handles token counting
-// @Summary Count tokens
-// @Description Estimates token count for a Claude request
-// @Tags Claude Compatible
-// @Accept json
-// @Produce json
-// @Param request body MessageRequest true "Message request"
-// @Success 200 {object} map[string]interface{}
-// @Router /v1/messages/count_tokens [post]
-func (h *Handler) HandleCountTokens(c *fiber.Ctx) error {
-	var req MessageRequest
+// HandleCountTokens handles token counting (logic only; Swagger lives in controllers)
+func (h *ClaudeHandler) HandleCountTokens(c *fiber.Ctx) error {
+	var req models.MessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"type":  "error",

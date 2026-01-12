@@ -7,6 +7,8 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
+      - PROVIDER_TYPE=gemini
+      # Gemini Configuration
       - GEMINI_1PSID=
       - GEMINI_1PSIDTS=
       - GEMINI_1PSIDCC=
