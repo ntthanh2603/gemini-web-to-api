@@ -4,9 +4,8 @@ import (
 	"context"
 
 	"ai-bridges/internal/config"
-	claudeHandlers "ai-bridges/internal/handlers/claude"
-	geminiHandlers "ai-bridges/internal/handlers/gemini"
-	openaiHandlers "ai-bridges/internal/handlers/openai"
+	"ai-bridges/internal/handlers"
+	"ai-bridges/internal/providers"
 	"ai-bridges/internal/providers/gemini"
 	"ai-bridges/internal/server"
 	"ai-bridges/pkg/logger"
@@ -27,17 +26,24 @@ func main() {
 		fx.Provide(
 			config.New,
 			logger.New,
+			providers.NewProviderManager,
 			gemini.NewClient,
-			geminiHandlers.NewHandler,
-			openaiHandlers.NewHandler,
-			claudeHandlers.NewHandler,
+			handlers.NewGeminiHandler,
+			handlers.NewOpenAIHandler,
+			handlers.NewClaudeHandler,
 		),
 		fx.Invoke(
 			server.New,
 		),
-		fx.Invoke(func(c *gemini.Client, log *zap.Logger) {
-			if err := c.Init(context.Background()); err != nil {
-				log.Warn("Gemini client initialization warning", zap.Error(err))
+		fx.Invoke(func(pm *providers.ProviderManager, c *gemini.Client, cfg *config.Config, log *zap.Logger) {
+			pm.Register("gemini", c)
+			// Initialize all providers (non-blocking, logs warnings on failure)
+			pm.InitAllProviders(context.Background())
+			// Select the provider based on config
+			if err := pm.SelectProvider(cfg.Providers.ProviderType); err != nil {
+				log.Error("Failed to select provider", zap.Error(err))
+			} else {
+				log.Debug("Active provider selected", zap.String("provider_type", cfg.Providers.ProviderType))
 			}
 		}),
 		fx.NopLogger, 

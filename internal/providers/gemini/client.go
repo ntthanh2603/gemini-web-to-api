@@ -61,8 +61,7 @@ func NewClient(cfg *config.Config, log *zap.Logger) *Client {
 
 	client := req.NewClient().
 		SetTimeout(2 * time.Minute).
-		SetCommonHeaders(DefaultHeaders).
-		EnableDumpAllWithoutBody()
+		SetCommonHeaders(DefaultHeaders)
 
 	refreshIntervalMinutes := cfg.Gemini.RefreshInterval
 	if refreshIntervalMinutes <= 0 {
@@ -82,14 +81,23 @@ func NewClient(cfg *config.Config, log *zap.Logger) *Client {
 func (c *Client) Init(ctx context.Context) error {
 	// Clean cookies
 	c.cookies.Secure1PSID = cleanCookie(c.cookies.Secure1PSID)
-	c.cookies.Secure1PSIDTS = cleanCookie(c.cookies.Secure1PSIDTS)
+	configPSIDTS := cleanCookie(c.cookies.Secure1PSIDTS) // Save original config value
+	c.cookies.Secure1PSIDTS = configPSIDTS
 	c.cookies.Secure1PSIDCC = cleanCookie(c.cookies.Secure1PSIDCC)
 
-	// 1b. Always try to load 1PSIDTS from disk cache (it might be fresher than config)
+	// Check if we should use cached cookies or clear cache
 	if c.cookies.Secure1PSID != "" {
-		if cachedTS, err := c.LoadCachedCookies(); err == nil && cachedTS != "" {
+		cachedTS, err := c.LoadCachedCookies()
+		
+		// If config has a new PSIDTS that differs from cache, clear cache and use config
+		if configPSIDTS != "" && cachedTS != "" && configPSIDTS != cachedTS {
+			c.log.Info("Config has new __Secure-1PSIDTS, clearing old cache")
+			_ = c.ClearCookieCache()
+			// Keep using the config value (already set above)
+		} else if err == nil && cachedTS != "" && configPSIDTS == "" {
+			// Only use cache if config doesn't provide PSIDTS
 			c.cookies.Secure1PSIDTS = cachedTS
-			c.log.Info("Loaded valid __Secure-1PSIDTS from local cache (overriding config)")
+			c.log.Info("Loaded __Secure-1PSIDTS from cache")
 		}
 	}
 
@@ -628,6 +636,26 @@ func (c *Client) SaveCachedCookies() error {
 	err := os.WriteFile(filename, []byte(c.cookies.Secure1PSIDTS), 0600)
 	if err == nil {
 		c.log.Debug("Saved __Secure-1PSIDTS to local cache for future use", zap.String("file", filename))
+	} else {
+		c.log.Warn("Failed to save cookies to cache", zap.String("file", filename), zap.Error(err))
 	}
 	return err
+}
+
+// ClearCookieCache deletes the cached cookie file for the current PSID
+func (c *Client) ClearCookieCache() error {
+	if c.cookies.Secure1PSID == "" {
+		return nil
+	}
+
+	hash := sha256.Sum256([]byte(c.cookies.Secure1PSID))
+	filename := filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
+
+	err := os.Remove(filename)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	
+	c.log.Debug("Cleared cookie cache", zap.String("file", filename))
+	return nil
 }

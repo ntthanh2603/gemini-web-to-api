@@ -1,6 +1,58 @@
 basePath: /
 definitions:
-  claude.ConfigContent:
+  models.Candidate:
+    properties:
+      content:
+        $ref: '#/definitions/models.Content'
+      finishMessage:
+        type: string
+      finishReason:
+        type: string
+      index:
+        type: integer
+    type: object
+  models.ChatCompletionRequest:
+    properties:
+      max_tokens:
+        type: integer
+      messages:
+        items:
+          $ref: '#/definitions/models.Message'
+        type: array
+      model:
+        type: string
+      stream:
+        type: boolean
+      temperature:
+        type: number
+    type: object
+  models.ChatCompletionResponse:
+    properties:
+      choices:
+        items:
+          $ref: '#/definitions/models.Choice'
+        type: array
+      created:
+        type: integer
+      id:
+        type: string
+      model:
+        type: string
+      object:
+        type: string
+      usage:
+        $ref: '#/definitions/models.Usage'
+    type: object
+  models.Choice:
+    properties:
+      finish_reason:
+        type: string
+      index:
+        type: integer
+      message:
+        $ref: '#/definitions/models.Message'
+    type: object
+  models.ConfigContent:
     properties:
       text:
         type: string
@@ -8,20 +60,102 @@ definitions:
         description: '"text"'
         type: string
     type: object
-  claude.Message:
+  models.Content:
+    properties:
+      parts:
+        items:
+          $ref: '#/definitions/models.Part'
+        type: array
+      role:
+        type: string
+    type: object
+  models.ErrorResponse:
+    properties:
+      code:
+        type: string
+      error:
+        description: Can be string or map[string]interface{}
+      type:
+        type: string
+    type: object
+  models.GeminiGenerateRequest:
+    properties:
+      contents:
+        items:
+          $ref: '#/definitions/models.Content'
+        type: array
+      generationConfig:
+        $ref: '#/definitions/models.GenerationConfig'
+      safety_settings:
+        items:
+          additionalProperties:
+            type: string
+          type: object
+        type: array
+    type: object
+  models.GeminiGenerateResponse:
+    properties:
+      candidates:
+        items:
+          $ref: '#/definitions/models.Candidate'
+        type: array
+      usageMetadata:
+        $ref: '#/definitions/models.UsageMetadata'
+    type: object
+  models.GeminiModel:
+    properties:
+      description:
+        type: string
+      displayName:
+        type: string
+      name:
+        type: string
+      supportedGenerationMethods:
+        items:
+          type: string
+        type: array
+      version:
+        type: string
+    type: object
+  models.GeminiModelsResponse:
+    properties:
+      models:
+        items:
+          $ref: '#/definitions/models.GeminiModel'
+        type: array
+    type: object
+  models.GenerationConfig:
+    properties:
+      maxOutputTokens:
+        type: integer
+      temperature:
+        type: number
+      topK:
+        type: integer
+      topP:
+        type: number
+    type: object
+  models.InlineData:
+    properties:
+      data:
+        type: string
+      mimeType:
+        type: string
+    type: object
+  models.Message:
     properties:
       content:
         type: string
       role:
         type: string
     type: object
-  claude.MessageRequest:
+  models.MessageRequest:
     properties:
       max_tokens:
         type: integer
       messages:
         items:
-          $ref: '#/definitions/claude.Message'
+          $ref: '#/definitions/models.Message'
         type: array
       model:
         type: string
@@ -30,11 +164,11 @@ definitions:
       system:
         type: string
     type: object
-  claude.MessageResponse:
+  models.MessageResponse:
     properties:
       content:
         items:
-          $ref: '#/definitions/claude.ConfigContent'
+          $ref: '#/definitions/models.ConfigContent'
         type: array
       id:
         type: string
@@ -49,223 +183,61 @@ definitions:
         description: '"message"'
         type: string
       usage:
-        $ref: '#/definitions/claude.Usage'
+        $ref: '#/definitions/models.Usage'
     type: object
-  claude.ModelData:
+  models.ModelData:
     properties:
+      created:
+        type: integer
       created_at:
         type: integer
       display_name:
         type: string
       id:
         type: string
+      object:
+        type: string
+      owned_by:
+        type: string
       type:
         type: string
     type: object
-  claude.ModelListResponse:
+  models.ModelListResponse:
     properties:
       data:
         items:
-          $ref: '#/definitions/claude.ModelData'
+          $ref: '#/definitions/models.ModelData'
         type: array
+      object:
+        type: string
     type: object
-  claude.Usage:
+  models.Part:
     properties:
+      inlineData:
+        $ref: '#/definitions/models.InlineData'
+      text:
+        type: string
+    type: object
+  models.Usage:
+    properties:
+      completion_tokens:
+        type: integer
       input_tokens:
         type: integer
       output_tokens:
         type: integer
-    type: object
-  gemini.Candidate:
-    properties:
-      content:
-        $ref: '#/definitions/gemini.Content'
-      finishReason:
-        type: string
-      index:
+      prompt_tokens:
+        type: integer
+      total_tokens:
         type: integer
     type: object
-  gemini.Content:
-    properties:
-      parts:
-        items:
-          $ref: '#/definitions/gemini.Part'
-        type: array
-      role:
-        type: string
-    type: object
-  gemini.GeminiGenerateRequest:
-    properties:
-      contents:
-        items:
-          $ref: '#/definitions/gemini.Content'
-        type: array
-      generationConfig:
-        $ref: '#/definitions/gemini.GenerationConfig'
-    type: object
-  gemini.GeminiGenerateResponse:
-    properties:
-      candidates:
-        items:
-          $ref: '#/definitions/gemini.Candidate'
-        type: array
-      usageMetadata:
-        $ref: '#/definitions/gemini.UsageMetadata'
-    type: object
-  gemini.GeminiModel:
-    properties:
-      description:
-        type: string
-      displayName:
-        type: string
-      inputTokenLimit:
-        type: integer
-      name:
-        type: string
-      outputTokenLimit:
-        type: integer
-      supportedGenerationMethods:
-        items:
-          type: string
-        type: array
-      version:
-        type: string
-    type: object
-  gemini.GeminiModelsResponse:
-    properties:
-      models:
-        items:
-          $ref: '#/definitions/gemini.GeminiModel'
-        type: array
-    type: object
-  gemini.GenerationConfig:
-    properties:
-      maxOutputTokens:
-        type: integer
-      stopSequences:
-        items:
-          type: string
-        type: array
-      temperature:
-        type: number
-      topK:
-        type: integer
-      topP:
-        type: number
-    type: object
-  gemini.InlineData:
-    properties:
-      data:
-        description: Base64
-        type: string
-      mimeType:
-        type: string
-    type: object
-  gemini.Part:
-    properties:
-      inlineData:
-        $ref: '#/definitions/gemini.InlineData'
-      text:
-        type: string
-    type: object
-  gemini.UsageMetadata:
+  models.UsageMetadata:
     properties:
       candidatesTokenCount:
         type: integer
       promptTokenCount:
         type: integer
       totalTokenCount:
-        type: integer
-    type: object
-  openai.ChatCompletionRequest:
-    properties:
-      max_tokens:
-        type: integer
-      messages:
-        items:
-          $ref: '#/definitions/openai.Message'
-        type: array
-      model:
-        type: string
-      stream:
-        type: boolean
-      temperature:
-        type: number
-    type: object
-  openai.ChatCompletionResponse:
-    properties:
-      choices:
-        items:
-          $ref: '#/definitions/openai.Choice'
-        type: array
-      created:
-        type: integer
-      id:
-        type: string
-      model:
-        type: string
-      object:
-        type: string
-      usage:
-        $ref: '#/definitions/openai.Usage'
-    type: object
-  openai.Choice:
-    properties:
-      finish_reason:
-        type: string
-      index:
-        type: integer
-      message:
-        $ref: '#/definitions/openai.Message'
-    type: object
-  openai.Error:
-    properties:
-      code:
-        type: string
-      message:
-        type: string
-      type:
-        type: string
-    type: object
-  openai.ErrorResponse:
-    properties:
-      error:
-        $ref: '#/definitions/openai.Error'
-    type: object
-  openai.Message:
-    properties:
-      content:
-        type: string
-      role:
-        type: string
-    type: object
-  openai.ModelData:
-    properties:
-      created:
-        type: integer
-      id:
-        type: string
-      object:
-        type: string
-      owned_by:
-        type: string
-    type: object
-  openai.ModelListResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/openai.ModelData'
-        type: array
-      object:
-        type: string
-    type: object
-  openai.Usage:
-    properties:
-      completion_tokens:
-        type: integer
-      prompt_tokens:
-        type: integer
-      total_tokens:
         type: integer
     type: object
 host: localhost:3000
@@ -277,37 +249,7 @@ info:
   title: AI Bridges API
   version: "1.0"
 paths:
-  /v1/chat/completions:
-    post:
-      consumes:
-      - application/json
-      description: Accepts requests in OpenAI format
-      parameters:
-      - description: Chat request
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/openai.ChatCompletionRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/openai.ChatCompletionResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/openai.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/openai.ErrorResponse'
-      summary: OpenAI-compatible chat completions
-      tags:
-      - OpenAI Compatible
-  /v1/messages:
+  /claude/v1/messages:
     post:
       consumes:
       - application/json
@@ -318,14 +260,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/claude.MessageRequest'
+          $ref: '#/definitions/models.MessageRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/claude.MessageResponse'
+            $ref: '#/definitions/models.MessageResponse'
         "400":
           description: Bad Request
           schema:
@@ -339,7 +281,7 @@ paths:
       summary: Claude-compatible chat
       tags:
       - Claude Compatible
-  /v1/messages/count_tokens:
+  /claude/v1/messages/count_tokens:
     post:
       consumes:
       - application/json
@@ -350,7 +292,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/claude.MessageRequest'
+          $ref: '#/definitions/models.MessageRequest'
       produces:
       - application/json
       responses:
@@ -362,22 +304,22 @@ paths:
       summary: Count tokens
       tags:
       - Claude Compatible
-  /v1/models:
+  /claude/v1/models:
     get:
       consumes:
       - application/json
-      description: Returns a list of models supported by the OpenAI-compatible API
+      description: Returns a list of Claude models
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/openai.ModelListResponse'
-      summary: List OpenAI models
+            $ref: '#/definitions/models.ModelListResponse'
+      summary: List Claude models (Internal)
       tags:
-      - OpenAI Compatible
-  /v1/models/{model_id}:
+      - Claude Compatible
+  /claude/v1/models/{model_id}:
     get:
       consumes:
       - application/json
@@ -394,11 +336,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/claude.ModelData'
+            $ref: '#/definitions/models.ModelData'
       summary: Get Claude model by ID
       tags:
       - Claude Compatible
-  /v1beta/models:
+  /gemini/v1beta/models:
     get:
       description: Returns models supported by the Gemini provider
       produces:
@@ -407,11 +349,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/gemini.GeminiModelsResponse'
+            $ref: '#/definitions/models.GeminiModelsResponse'
       summary: List Gemini Models (v1beta)
       tags:
       - Gemini v1beta
-  /v1beta/models/{model}:generateContent:
+  /gemini/v1beta/models/{model}:generateContent:
     post:
       consumes:
       - application/json
@@ -427,18 +369,18 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/gemini.GeminiGenerateRequest'
+          $ref: '#/definitions/models.GeminiGenerateRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/gemini.GeminiGenerateResponse'
+            $ref: '#/definitions/models.GeminiGenerateResponse'
       summary: Generate Content (v1beta)
       tags:
       - Gemini v1beta
-  /v1beta/models/{model}:streamGenerateContent:
+  /gemini/v1beta/models/{model}:streamGenerateContent:
     post:
       consumes:
       - application/json
@@ -454,11 +396,56 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/gemini.GeminiGenerateRequest'
+          $ref: '#/definitions/models.GeminiGenerateRequest'
       produces:
       - application/json
       responses: {}
       summary: Stream Generate Content (v1beta)
       tags:
       - Gemini v1beta
+  /openai/v1/chat/completions:
+    post:
+      consumes:
+      - application/json
+      description: Accepts requests in OpenAI format
+      parameters:
+      - description: Chat request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.ChatCompletionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ChatCompletionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: OpenAI-compatible chat completions
+      tags:
+      - OpenAI Compatible
+  /openai/v1/models:
+    get:
+      consumes:
+      - application/json
+      description: Returns a list of models supported by the OpenAI-compatible API
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ModelListResponse'
+      summary: List OpenAI models
+      tags:
+      - OpenAI Compatible
 swagger: "2.0"

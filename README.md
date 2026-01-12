@@ -2,7 +2,7 @@
 
 **AI Bridges** transforms web-based AI services (like Google Gemini) into standardized REST APIs. Use your favorite AI SDKs (OpenAI, Claude, Gemini) to connect to Gemini through a single, high-performance Go server.
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://github.com/ntthanh2603/ai-bridges/pkgs/container/ai-bridges)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/ntthanh2603/ai-bridges/blob/main/LICENSE)
 
@@ -50,6 +50,8 @@ services:
     ports:
       - "3000:3000"
     environment:
+    environment:
+      - PROVIDER_TYPE=gemini
       - GEMINI_1PSID=your_1psid_here
       - GEMINI_1PSIDTS=your_1psidts_here
       - GEMINI_REFRESH_INTERVAL=30
@@ -67,20 +69,22 @@ docker-compose up -d
 4. **Test it**:
 
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:3000/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gemini-pro", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-✅ **Done!** Your AI bridge is running at `http://localhost:3000`
+5. **Done!** Your AI bridge is running at `http://localhost:3000`
 
 ### Option 2: Docker Run
 
 ```bash
 docker run -d -p 3000:3000 \
+  -e PROVIDER_TYPE=gemini \
   -e GEMINI_1PSID="your_psid_here" \
   -e GEMINI_1PSIDTS="your_psidts_here" \
-  -v $(pwd)/cookies:/app/.cookies \
+  -e GEMINI_1PSIDCC="your_psidcc_here" \
+  -v ./cookies:/app/.cookies \
   --name ai-bridges \
   --restart unless-stopped \
   ghcr.io/ntthanh2603/ai-bridges:latest
@@ -127,7 +131,7 @@ docker run -d -p 3000:3000 \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:3000/v1",
+    base_url="http://localhost:3000/openai/v1",
     api_key="not-needed"
 )
 
@@ -144,7 +148,7 @@ print(response.choices[0].message.content)
 from langchain_anthropic import ChatAnthropic
 
 llm = ChatAnthropic(
-    base_url="http://localhost:3000",
+    base_url="http://localhost:3000/claude",
     model="claude-3-5-sonnet-20240620",
     api_key="not-needed"
 )
@@ -161,7 +165,7 @@ import google.generativeai as genai
 genai.configure(
     api_key="not-needed",
     transport="rest",
-    client_options={"api_endpoint": "http://localhost:3000"}
+    client_options={"api_endpoint": "http://localhost:3000/gemini"}
 )
 
 model = genai.GenerativeModel("gemini-pro")
@@ -172,7 +176,7 @@ print(response.text)
 ### cURL (Direct HTTP)
 
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:3000/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gemini-pro",
@@ -210,38 +214,9 @@ go build -o ai-bridges cmd/server/main.go
 
 ## 📘 API Documentation
 
-Once running, visit **`http://localhost:3000/swagger/`** for interactive API documentation.
+Once running, visit **`http://localhost:3000/swagger/index.html`** for interactive API documentation.
 
 ![Swagger UI](assets/swagger.png)
-
----
-
-## 🛠️ Technology Stack
-
-- **Language**: Go 1.24+
-- **Framework**: [Fiber](https://github.com/gofiber/fiber) (Express-like web framework)
-- **HTTP Client**: [req/v3](https://github.com/imroc/req/v3)
-- **Logging**: [Uber Zap](https://github.com/uber-go/zap)
-- **Documentation**: [Swag](https://github.com/swaggo/swag) (Swagger/OpenAPI)
-
----
-
-## 📦 Project Structure
-
-```
-ai-bridges/
-├── cmd/server/          # Application entry point
-├── internal/
-│   ├── handlers/        # HTTP request handlers
-│   ├── providers/       # AI provider implementations (Gemini, etc.)
-│   └── server/          # Server setup and routing
-├── pkg/
-│   ├── config/          # Configuration management
-│   └── utils/           # Utility functions
-├── examples/            # Client usage examples
-├── docker-compose.yml   # Docker Compose configuration
-└── Dockerfile           # Container image definition
-```
 
 ---
 

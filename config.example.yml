@@ -1,8 +1,30 @@
+providers:
+  provider_type: "gemini" # Options: gemini, claude, openai
+
 gemini:
+  # To get these values, visit https://gemini.google.com and log in
+  # Then open Developer Tools (F12) -> Application/Storage tab -> Cookies -> https://google.com
+  #
+  # GEMINI_1PSID: Required - This is the __Secure-1PSID cookie value
+  # GEMINI_1PSIDTS: Required - This is the __Secure-1PSIDTS cookie value
+  # GEMINI_1PSIDCC: Optional - This is the __Secure-1PSIDCC cookie value (improves reliability)
+  #
+  # NOTE: These cookies expire periodically, so you may need to refresh them
   GEMINI_1PSID: ""
   GEMINI_1PSIDTS: ""
   GEMINI_1PSIDCC: ""
-  GEMINI_REFRESH_INTERVAL: 1440 # Minutes
+  GEMINI_REFRESH_INTERVAL: 1440 # Minutes - How often to try refreshing cookies (optional)
+  cookies: "" # JSON format for additional cookies
+
+claude:
+  CLAUDE_API_KEY: ""
+  CLAUDE_MODEL: ""
+  cookies: "" # JSON format for additional cookies
+
+openai:
+  OPENAI_API_KEY: ""
+  OPENAI_MODEL: ""
+  cookies: "" # JSON format for additional cookies
 
 server:
-  PORT: 3000
+  PORT: 3000 # Default port, server will try alternatives if this is busy

@@ -27,6 +27,16 @@ func NewMiddleware(log *zap.Logger) fiber.Handler {
 		latency := stop.Sub(start)
 		ip := c.IP()
 
+		// Skip logging for Swagger static files to reduce noise
+		if method == "GET" && (
+			path == "/swagger/swagger-ui.css" ||
+			path == "/swagger/swagger-ui-bundle.js" ||
+			path == "/swagger/swagger-ui-standalone-preset.js" ||
+			path == "/swagger/favicon-32x32.png" ||
+			path == "/swagger/doc.json") {
+			return nil
+		}
+
 		reset := "\033[0m"
 		
 		statusColor := "\033[32m" 
