@@ -50,6 +50,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      - PROVIDER_TYPE=gemini
       - GEMINI_1PSID=your_1psid_here
       - GEMINI_1PSIDTS=your_1psidts_here
       - GEMINI_REFRESH_INTERVAL=30
@@ -72,12 +73,13 @@ curl -X POST http://localhost:3000/openai/v1/chat/completions \
   -d '{"model": "gemini-pro", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-4. **Done!** Your AI bridge is running at `http://localhost:3000`
+5. **Done!** Your AI bridge is running at `http://localhost:3000`
 
 ### Option 2: Docker Run
 
 ```bash
 docker run -d -p 3000:3000 \
+  -e PROVIDER_TYPE=gemini \
   -e GEMINI_1PSID="your_psid_here" \
   -e GEMINI_1PSIDTS="your_psidts_here" \
   -v $(pwd)/cookies:/app/.cookies \
@@ -210,38 +212,9 @@ go build -o ai-bridges cmd/server/main.go
 
 ## 📘 API Documentation
 
-Once running, visit **`http://localhost:3000/swagger/`** for interactive API documentation.
+Once running, visit **`http://localhost:3000/swagger/index.html`** for interactive API documentation.
 
 ![Swagger UI](assets/swagger.png)
-
----
-
-## 🛠️ Technology Stack
-
-- **Language**: Go 1.24+
-- **Framework**: [Fiber](https://github.com/gofiber/fiber) (Express-like web framework)
-- **HTTP Client**: [req/v3](https://github.com/imroc/req/v3)
-- **Logging**: [Uber Zap](https://github.com/uber-go/zap)
-- **Documentation**: [Swag](https://github.com/swaggo/swag) (Swagger/OpenAPI)
-
----
-
-## 📦 Project Structure
-
-```
-ai-bridges/
-├── cmd/server/          # Application entry point
-├── internal/
-│   ├── handlers/        # HTTP request handlers
-│   ├── providers/       # AI provider implementations (Gemini, etc.)
-│   └── server/          # Server setup and routing
-├── pkg/
-│   ├── config/          # Configuration management
-│   └── utils/           # Utility functions
-├── examples/            # Client usage examples
-├── docker-compose.yml   # Docker Compose configuration
-└── Dockerfile           # Container image definition
-```
 
 ---
 
