@@ -67,12 +67,12 @@ docker-compose up -d
 4. **Test it**:
 
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:3000/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gemini-pro", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-✅ **Done!** Your AI bridge is running at `http://localhost:3000`
+4. **Done!** Your AI bridge is running at `http://localhost:3000`
 
 ### Option 2: Docker Run
 
@@ -127,7 +127,7 @@ docker run -d -p 3000:3000 \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:3000/v1",
+    base_url="http://localhost:3000/openai/v1",
     api_key="not-needed"
 )
 
@@ -144,7 +144,7 @@ print(response.choices[0].message.content)
 from langchain_anthropic import ChatAnthropic
 
 llm = ChatAnthropic(
-    base_url="http://localhost:3000",
+    base_url="http://localhost:3000/claude",
     model="claude-3-5-sonnet-20240620",
     api_key="not-needed"
 )
@@ -161,7 +161,7 @@ import google.generativeai as genai
 genai.configure(
     api_key="not-needed",
     transport="rest",
-    client_options={"api_endpoint": "http://localhost:3000"}
+    client_options={"api_endpoint": "http://localhost:3000/gemini"}
 )
 
 model = genai.GenerativeModel("gemini-pro")
@@ -172,7 +172,7 @@ print(response.text)
 ### cURL (Direct HTTP)
 
 ```bash
-curl -X POST http://localhost:3000/v1/chat/completions \
+curl -X POST http://localhost:3000/openai/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gemini-pro",
