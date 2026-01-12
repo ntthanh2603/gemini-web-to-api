@@ -634,6 +634,11 @@ func (c *Client) SaveCachedCookies() error {
 	filename := filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
 
 	err := os.WriteFile(filename, []byte(c.cookies.Secure1PSIDTS), 0600)
+	if err == nil {
+		c.log.Debug("Saved __Secure-1PSIDTS to local cache for future use", zap.String("file", filename))
+	} else {
+		c.log.Warn("Failed to save cookies to cache", zap.String("file", filename), zap.Error(err))
+	}
 	return err
 }
 

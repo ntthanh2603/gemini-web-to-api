@@ -26,18 +26,7 @@ type Server struct {
 }
 
 func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *handlers.OpenAIHandler, claudeHandler *handlers.ClaudeHandler, cfg *config.Config, log *zap.Logger) (*Server, error) {
-	app := fiber.New(fiber.Config{
-		AppName: "AI Bridges API",
-	})
-
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Requested-With, x-api-key, anthropic-version",
-		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-	}))
-	
-	app.Use(logger.NewMiddleware(log))
-	app.Use(recover.New())
+	app := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
 
 	server := &Server{
 		app:           app,
@@ -47,8 +36,6 @@ func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *
 		cfg:           cfg,
 		log:           log,
 	}
-
-	server.registerRoutes()
 
 		lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
@@ -66,7 +53,7 @@ func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *
 						log.Info("Attempting to start server on alternative port", zap.String("port", port))
 						
 						// Create a new Fiber app with the same configuration and handlers
-						altApp := createAltApp(geminiHandler, openaiHandler, claudeHandler, log)
+						altApp := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
 						
 						if listenErr := altApp.Listen(":" + port); listenErr == nil {
 							log.Info("Server started successfully on alternative port", zap.String("port", port))
@@ -78,7 +65,7 @@ func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *
 					
 					// If all predefined ports fail, try a random port
 					log.Info("Attempting to start server on random available port")
-					randomPortApp := createAltApp(geminiHandler, openaiHandler, claudeHandler, log)
+					randomPortApp := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
 					// Start server on random port - this will block if successful, so no need for else clause
 					if listenErr := randomPortApp.Listen(":0"); listenErr != nil {
 						log.Fatal("Could not start server on any port", zap.Error(listenErr))
@@ -96,70 +83,44 @@ func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *
 	return server, nil
 }
 
-// createAltApp creates an alternative Fiber app with the same configuration and routes
-func createAltApp(geminiHandler *handlers.GeminiHandler, openaiHandler *handlers.OpenAIHandler, claudeHandler *handlers.ClaudeHandler, log *zap.Logger) *fiber.App {
-	altApp := fiber.New(fiber.Config{
+// buildApp creates and configures a Fiber app with all middleware and routes
+func buildApp(log *zap.Logger, geminiHandler *handlers.GeminiHandler, openaiHandler *handlers.OpenAIHandler, claudeHandler *handlers.ClaudeHandler) *fiber.App {
+	app := fiber.New(fiber.Config{
 		AppName: "AI Bridges API",
 	})
 
-	altApp.Use(cors.New(cors.Config{
+	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-Requested-With, x-api-key, anthropic-version",
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS, PATCH",
 	}))
 	
-	altApp.Use(logger.NewMiddleware(log))
-	altApp.Use(recover.New())
+	app.Use(logger.NewMiddleware(log))
+	app.Use(recover.New())
 
 	// --- Gemini routes (prefixed with /gemini) ---
-	geminiGroup := altApp.Group("/gemini")
+	geminiGroup := app.Group("/gemini")
 	geminiV1 := geminiGroup.Group("/v1beta")
 	controllers.NewGeminiController(geminiHandler).Register(geminiV1)
 
 	// --- OpenAI routes (prefixed with /openai) ---
-	openaiGroup := altApp.Group("/openai")
+	openaiGroup := app.Group("/openai")
 	openaiV1 := openaiGroup.Group("/v1")
 	controllers.NewOpenAIController(openaiHandler).Register(openaiV1)
 
 	// --- Claude routes (prefixed with /claude) ---
-	claudeGroup := altApp.Group("/claude")
+	claudeGroup := app.Group("/claude")
 	claudeV1 := claudeGroup.Group("/v1")
 	controllers.NewClaudeController(claudeHandler).Register(claudeV1)
 
-	altApp.Get("/swagger/*", fiberSwagger.WrapHandler)
+	app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
-	altApp.Get("/health", func(c *fiber.Ctx) error {
+	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
 			"service": "ai-bridges",
 		})
 	})
 
-	return altApp
-}
-
-func (s *Server) registerRoutes() {
-	s.app.Get("/swagger/*", fiberSwagger.WrapHandler)
-
-	// --- Gemini routes (prefixed with /gemini) ---
-	geminiGroup := s.app.Group("/gemini")
-	geminiV1 := geminiGroup.Group("/v1beta")
-	controllers.NewGeminiController(s.geminiHandler).Register(geminiV1)
-
-	// --- OpenAI routes (prefixed with /openai) ---
-	openaiGroup := s.app.Group("/openai")
-	openaiV1 := openaiGroup.Group("/v1")
-	controllers.NewOpenAIController(s.openaiHandler).Register(openaiV1)
-
-	// --- Claude routes (prefixed with /claude) ---
-	claudeGroup := s.app.Group("/claude")
-	claudeV1 := claudeGroup.Group("/v1")
-	controllers.NewClaudeController(s.claudeHandler).Register(claudeV1)
-
-	s.app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"status": "ok",
-			"service": "ai-bridges",
-		})
-	})
+	return app
 }
