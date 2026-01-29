@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 
@@ -59,7 +60,44 @@ func New() (*Config, error) {
 	cfg.Gemini.Cookies = os.Getenv("GEMINI_COOKIES")
 	cfg.Gemini.RefreshInterval = getEnvInt("GEMINI_REFRESH_INTERVAL", defaultGeminiRefreshInterval)
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// Validate checks if the configuration has required values
+func (c *Config) Validate() error {
+	var missingVars []string
+
+	// Check Gemini configuration - at least one of these should be present
+	if c.Gemini.Secure1PSID == "" {
+		missingVars = append(missingVars, "GEMINI_1PSID")
+	}
+
+	if c.Gemini.Secure1PSID != "" {
+		// If PSID is present, we need at least one of these
+		if c.Gemini.Secure1PSIDTS == "" && c.Gemini.Secure1PSIDCC == "" && c.Gemini.Cookies == "" {
+			missingVars = append(missingVars, "GEMINI_1PSIDTS or GEMINI_1PSIDCC or GEMINI_COOKIES")
+		}
+	}
+
+	// Check Server port is valid
+	if c.Server.Port == "" {
+		c.Server.Port = defaultServerPort
+	}
+
+	if _, err := strconv.Atoi(c.Server.Port); err != nil {
+		return fmt.Errorf("invalid PORT value: %q (must be a number)", c.Server.Port)
+	}
+
+	if len(missingVars) > 0 {
+		return fmt.Errorf("missing required environment variables: %v. Please set them before running the application", missingVars)
+	}
+
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {

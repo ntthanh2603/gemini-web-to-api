@@ -53,8 +53,9 @@ services:
       - GEMINI_1PSID=your_1psid_here
       - GEMINI_1PSIDTS=your_1psidts_here
       - GEMINI_REFRESH_INTERVAL=30
+      - APP_ENV=production
     volumes:
-      - ./cookies:/app/.cookies
+      - ./cookies:/home/appuser/.cookies
     restart: unless-stopped
 ```
 
@@ -81,7 +82,11 @@ docker run -d -p 3000:3000 \
   -e GEMINI_1PSID="your_psid_here" \
   -e GEMINI_1PSIDTS="your_psidts_here" \
   -e GEMINI_1PSIDCC="your_psidcc_here" \
-  -v ./cookies:/app/.cookies \
+  -e GEMINI_REFRESH_INTERVAL=30 \
+  -e APP_ENV=production \
+  -v ./cookies:/home/appuser/.cookies \
+  --tmpfs /tmp:rw,size=512m \
+  --tmpfs /home/appuser/.cache:rw,size=256m \
   --name ai-bridges \
   --restart unless-stopped \
   ghcr.io/ntthanh2603/ai-bridges:latest
@@ -104,13 +109,13 @@ docker run -d -p 3000:3000 \
 
 ### Environment Variables
 
-| Variable                  | Required       | Default | Description                             |
-| ------------------------- | -------------- | ------- | --------------------------------------- |
-| `GEMINI_1PSID`            | ✅ Yes         | -       | Main session cookie from Gemini         |
-| `GEMINI_1PSIDTS`          | ✅ Yes         | -       | Timestamp cookie (prevents auth errors) |
-| `GEMINI_1PSIDCC`          | ⚠️ Recommended | -       | Context cookie (optional)               |
-| `GEMINI_REFRESH_INTERVAL` | ❌ No          | 30      | Cookie rotation interval (minutes)      |
-| `PORT`                    | ❌ No          | 3000    | Server port                             |
+| Variable                  | Required | Default | Description                             |
+| ------------------------- | -------- | ------- | --------------------------------------- |
+| `GEMINI_1PSID`            | ✅ Yes   | -       | Main session cookie from Gemini         |
+| `GEMINI_1PSIDTS`          | ✅ Yes   | -       | Timestamp cookie (prevents auth errors) |
+| `GEMINI_1PSIDCC`          | ✅ Yes   | -       | Context cookie (optional)               |
+| `GEMINI_REFRESH_INTERVAL` | ❌ No    | 30      | Cookie rotation interval (minutes)      |
+| `PORT`                    | ❌ No    | 3000    | Server port                             |
 
 ### Configuration Priority
 

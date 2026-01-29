@@ -5,11 +5,36 @@ services:
     container_name: ai-bridges
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       - PORT=3000
+      - APP_ENV=production
       # Gemini Configuration
-      - GEMINI_1PSID=
-      - GEMINI_1PSIDTS=
-      - GEMINI_1PSIDCC=
+      - GEMINI_1PSID=${GEMINI_1PSID}
+      - GEMINI_1PSIDTS=${GEMINI_1PSIDTS}
+      - GEMINI_1PSIDCC=${GEMINI_1PSIDCC}
       - GEMINI_REFRESH_INTERVAL=30
     restart: unless-stopped
+    tmpfs:
+      - /tmp
+      - /home/appuser/.cache
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:3000/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

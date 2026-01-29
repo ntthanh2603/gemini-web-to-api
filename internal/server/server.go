@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"sync"
+	"time"
 
 	"ai-bridges/internal/config"
 	"ai-bridges/internal/controllers"
@@ -23,13 +26,16 @@ type Server struct {
 	claudeHandler  *handlers.ClaudeHandler
 	cfg            *config.Config
 	log            *zap.Logger
+	appMu          sync.Mutex
 }
 
 func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *handlers.OpenAIHandler, claudeHandler *handlers.ClaudeHandler, cfg *config.Config, log *zap.Logger) (*Server, error) {
-	app := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
+	// Inject logger into handlers
+	geminiHandler.SetLogger(log)
+	openaiHandler.SetLogger(log)
+	claudeHandler.SetLogger(log)
 
 	server := &Server{
-		app:           app,
 		geminiHandler: geminiHandler,
 		openaiHandler: openaiHandler,
 		claudeHandler: claudeHandler,
@@ -37,50 +43,69 @@ func New(lc fx.Lifecycle, geminiHandler *handlers.GeminiHandler, openaiHandler *
 		log:           log,
 	}
 
-		lc.Append(fx.Hook{
+	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			// Since Fiber's Listen is blocking, we'll try to start the server in a goroutine
-			// and handle port conflicts by trying alternatives
+			app := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
+			
+			server.appMu.Lock()
+			server.app = app
+			server.appMu.Unlock()
+
+			// Start server in goroutine to avoid blocking
 			go func() {
-				// Attempt to start the main server on the configured port
-				if err := app.Listen(":" + cfg.Server.Port); err != nil {
-					log.Warn("Failed to bind to configured port", zap.String("port", cfg.Server.Port), zap.Error(err))
-					
-					// Define alternative ports to try
-					alternativePorts := []string{"3001", "3002", "3003", "3004", "3005", "8080", "8081", "8082", "9000", "9001"}
-					
-					for _, port := range alternativePorts {
-						log.Info("Attempting to start server on alternative port", zap.String("port", port))
-						
-						// Create a new Fiber app with the same configuration and handlers
-						altApp := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
-						
-						if listenErr := altApp.Listen(":" + port); listenErr == nil {
-							log.Info("Server started successfully on alternative port", zap.String("port", port))
-							return // Successfully started on alternative port
-						} else {
-							log.Warn("Failed to bind to alternative port", zap.String("port", port), zap.Error(listenErr))
-						}
-					}
-					
-					// If all predefined ports fail, try a random port
-					log.Info("Attempting to start server on random available port")
-					randomPortApp := buildApp(log, geminiHandler, openaiHandler, claudeHandler)
-					// Start server on random port - this will block if successful, so no need for else clause
-					if listenErr := randomPortApp.Listen(":0"); listenErr != nil {
-						log.Fatal("Could not start server on any port", zap.Error(listenErr))
-					}
-					// If Listen succeeds with random port, the server is running and this goroutine continues blocked
+				if err := server.startServerWithFallback(); err != nil {
+					log.Fatal("Could not start server on any port", zap.Error(err))
 				}
 			}()
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
-			return app.Shutdown()
+			server.appMu.Lock()
+			defer server.appMu.Unlock()
+			
+			if server.app != nil {
+				return server.app.ShutdownWithContext(ctx)
+			}
+			return nil
 		},
 	})
 
 	return server, nil
+}
+
+// startServerWithFallback attempts to start the server on the configured port with fallback options
+func (s *Server) startServerWithFallback() error {
+	port := s.cfg.Server.Port
+	if err := s.app.Listen(":" + port); err == nil {
+		s.log.Info("Server started on port", zap.String("port", port))
+		return nil
+	}
+	
+	s.log.Warn("Failed to bind to configured port, trying alternatives", zap.String("port", port))
+	
+	// Try alternative ports
+	alternativePorts := []string{"3001", "3002", "3003", "3004", "3005", "8080", "8081", "8082", "9000", "9001"}
+	
+	for _, altPort := range alternativePorts {
+		s.log.Info("Attempting to start server on alternative port", zap.String("port", altPort))
+		
+		// Create new app instance for each attempt
+		altApp := buildApp(s.log, s.geminiHandler, s.openaiHandler, s.claudeHandler)
+		
+		if err := altApp.Listen(":" + altPort); err == nil {
+			s.log.Info("Server started successfully on alternative port", zap.String("port", altPort))
+			
+			// Update server app reference
+			s.appMu.Lock()
+			s.app = altApp
+			s.appMu.Unlock()
+			
+			return nil
+		}
+		s.log.Debug("Failed to bind to alternative port", zap.String("port", altPort))
+	}
+	
+	return fmt.Errorf("failed to start server on any available port")
 }
 
 // buildApp creates and configures a Fiber app with all middleware and routes
@@ -116,10 +141,12 @@ func buildApp(log *zap.Logger, geminiHandler *handlers.GeminiHandler, openaiHand
 	app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"status":  "ok",
-			"service": "ai-bridges",
-		})
+		health := fiber.Map{
+			"status":    "ok",
+			"service":   "ai-bridges",
+			"timestamp": time.Now().Unix(),
+		}
+		return c.JSON(health)
 	})
 
 	return app

@@ -2,9 +2,8 @@ package handlers
 
 import (
 	"bufio"
-	"encoding/json"
+	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"ai-bridges/internal/models"
@@ -13,16 +12,24 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type ClaudeHandler struct {
 	client *gemini.Client
+	log    *zap.Logger
 }
 
 func NewClaudeHandler(client *gemini.Client) *ClaudeHandler {
 	return &ClaudeHandler{
 		client: client,
+		log:    zap.NewNop(),
 	}
+}
+
+// SetLogger sets the logger for this handler
+func (h *ClaudeHandler) SetLogger(log *zap.Logger) {
+	h.log = log
 }
 
 // GetModelData moved to models_handlers.go
@@ -67,14 +74,8 @@ func (h *ClaudeHandler) HandleModelByID(c *fiber.Ctx) error {
 // Model handlers moved to models_handlers.go
 
 
-// HandleMessages handles the main chat endpoint (logic only; Swagger lives in controllers)
+// HandleMessages handles the main chat endpoint
 func (h *ClaudeHandler) HandleMessages(c *fiber.Ctx) error {
-	// x-api-key check (loose check)
-	if c.Get("x-api-key") == "" {
-		// Proceed even if missing
-	}
-
-
 	var req models.MessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -83,26 +84,24 @@ func (h *ClaudeHandler) HandleMessages(c *fiber.Ctx) error {
 		})
 	}
 
-	// Prepare Prompt for backend
-
-	var promptBuilder strings.Builder
-	if req.System != "" {
-		promptBuilder.WriteString(fmt.Sprintf("System: %s\n\n", req.System))
+	// Validate messages
+	if err := validateMessages(req.Messages); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"type":  "error",
+			"error": fiber.Map{"type": "invalid_request_error", "message": err.Error()},
+		})
 	}
-	for _, msg := range req.Messages {
-		role := "User"
-		if msg.Role == "assistant" {
-			role = "Model"
-		}
-		promptBuilder.WriteString(fmt.Sprintf("%s: %s\n", role, msg.Content))
-	}
-	prompt := promptBuilder.String()
-	var opts []providers.GenerateOption // Declared once here
-	// Map Claude model to Gemini model if needed, or just pass valid gemini model
-	// For now we use default or stick to what openai handler does.
-	// We'll just pass the client default.
 
-	// Call Backend
+	// Build prompt
+	prompt := buildPromptFromMessages(req.Messages, req.System)
+	if prompt == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"type":  "error",
+			"error": fiber.Map{"type": "invalid_request_error", "message": "no valid content in messages"},
+		})
+	}
+
+	opts := []providers.GenerateOption{}
 	msgID := fmt.Sprintf("msg_%s", uuid.New().String())
 
 	// Handle Streaming
@@ -112,71 +111,79 @@ func (h *ClaudeHandler) HandleMessages(c *fiber.Ctx) error {
 		c.Set("Connection", "keep-alive")
 
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-			response, err := h.client.GenerateContent(c.Context(), prompt, opts...)
+			// Add timeout
+			ctx, cancel := context.WithTimeout(c.Context(), 5*time.Minute)
+			defer cancel()
+
+			response, err := h.client.GenerateContent(ctx, prompt, opts...)
 			if err != nil {
-				// Send error event
-				errData, _ := json.Marshal(fiber.Map{
+				h.log.Error("GenerateContent streaming failed", zap.Error(err), zap.String("model", req.Model))
+				_ = sendSSEChunk(w, h.log, "error", fiber.Map{
 					"type": "error",
 					"error": fiber.Map{
-						"type": "api_error",
+						"type":    "api_error",
 						"message": err.Error(),
 					},
 				})
-				// For SSE error is tricky, usually we just close or send specific event
-				// But let's try to send a text error.
-				fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errData))
 				return
 			}
 
-			// Simulate Streaming
-			sendEvent(w, "message_start", fiber.Map{
+			// Simulate Streaming - Claude format
+			_ = sendSSEChunk(w, h.log, "message_start", fiber.Map{
 				"type": "message_start",
 				"message": models.MessageResponse{
 					ID:    msgID,
 					Type:  "message",
 					Role:  "assistant",
 					Model: req.Model,
-					Usage: models.Usage{InputTokens: 10, OutputTokens: 1}, 
-					Content: []models.ConfigContent{}, 
-					StopReason: "",
+					Usage: models.Usage{InputTokens: 10, OutputTokens: 1},
 				},
 			})
 
-			sendEvent(w, "content_block_start", fiber.Map{
-				"type": "content_block_start",
-				"index": 0,
-				"content_block": models.ConfigContent{Type: "text", Text: ""},
+			_ = sendSSEChunk(w, h.log, "content_block_start", fiber.Map{
+				"type":           "content_block_start",
+				"index":          0,
+				"content_block":  models.ConfigContent{Type: "text", Text: ""},
 			})
 
-			// Simulated chunks
-			words := strings.Split(response.Text, " ")
-			for _, word := range words {
-				sendEvent(w, "content_block_delta", fiber.Map{
-					"type": "content_block_delta",
+			// Send chunks
+			chunks := splitResponseIntoChunks(response.Text, 20)
+			for _, chunk := range chunks {
+				_ = sendSSEChunk(w, h.log, "content_block_delta", fiber.Map{
+					"type":  "content_block_delta",
 					"index": 0,
-					"delta": models.Delta{Type: "text_delta", Text: word + " "},
+					"delta": models.Delta{Type: "text_delta", Text: chunk},
 				})
-				time.Sleep(20 * time.Millisecond)
+
+				// Check context cancellation
+				if !sleepWithCancel(c.Context(), 20*time.Millisecond) {
+					h.log.Info("Stream cancelled by client")
+					return
+				}
 			}
 
-			sendEvent(w, "content_block_stop", fiber.Map{"type": "content_block_stop", "index": 0})
-			sendEvent(w, "message_stop", fiber.Map{"type": "message_stop", "stop_reason": "end_turn"})
+			_ = sendSSEChunk(w, h.log, "content_block_stop", fiber.Map{"type": "content_block_stop", "index": 0})
+			_ = sendSSEChunk(w, h.log, "message_stop", fiber.Map{"type": "message_stop", "stop_reason": "end_turn"})
 		})
 		return nil
 	}
 
+	// Non-streaming response
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Minute)
+	defer cancel()
 
-	response, err := h.client.GenerateContent(c.Context(), prompt, opts...)
+	response, err := h.client.GenerateContent(ctx, prompt, opts...)
 	if err != nil {
+		h.log.Error("GenerateContent failed", zap.Error(err), zap.String("model", req.Model))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"type": "error",
+			"type":  "error",
 			"error": fiber.Map{"type": "api_error", "message": err.Error()},
 		})
 	}
 
 	// Construct Response
 	content := []models.ConfigContent{{Type: "text", Text: response.Text}}
-	
+
 	return c.JSON(models.MessageResponse{
 		ID:         msgID,
 		Type:       "message",
@@ -185,13 +192,13 @@ func (h *ClaudeHandler) HandleMessages(c *fiber.Ctx) error {
 		Content:    content,
 		StopReason: "end_turn",
 		Usage: models.Usage{
-			InputTokens:  15, 
+			InputTokens:  len(prompt) / 4,
 			OutputTokens: len(response.Text) / 4,
 		},
 	})
 }
 
-// HandleCountTokens handles token counting (logic only; Swagger lives in controllers)
+// HandleCountTokens handles token counting
 func (h *ClaudeHandler) HandleCountTokens(c *fiber.Ctx) error {
 	var req models.MessageRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -210,10 +217,4 @@ func (h *ClaudeHandler) HandleCountTokens(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"input_tokens": totalChars / 4,
 	})
-}
-
-func sendEvent(w *bufio.Writer, event string, data interface{}) {
-	jsonData, _ := json.Marshal(data)
-	fmt.Fprintf(w, "event: %s\n", event)
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
 }
