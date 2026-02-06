@@ -3,9 +3,9 @@
 **AI Bridges** transforms Google Gemini web interface into a standardized REST API. Access Gemini's power without API keys - just use your cookies!
 
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://github.com/ntthanh2603/ai-bridges/pkgs/container/ai-bridges)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://github.com/ntthanh2603/gemini-web-to-api/pkgs/container/gemini-web-to-api)
 [![Gemini Web](https://img.shields.io/badge/Gemini-Web-4285F4?style=flat&logo=google)](https://gemini.google.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/ntthanh2603/ai-bridges/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/ntthanh2603/gemini-web-to-api/blob/main/LICENSE)
 
 ---
 
@@ -33,45 +33,36 @@
 
 ### Option 1: Docker Compose (Recommended)
 
-1. **Get your Gemini cookies** (one-time setup):
+1. **Clone the repository**:
+
+   ```bash
+   git clone https://github.com/ntthanh2603/gemini-web-to-api.git
+   cd gemini-web-to-api
+   ```
+
+2. **Configure your cookies**:
    - Go to [gemini.google.com](https://gemini.google.com) and sign in
    - Press `F12` → **Application** tab → **Cookies**
-   - Copy `__Secure-1PSID` and `__Secure-1PSIDTS`
+   - Copy `__Secure-1PSID`, `__Secure-1PSIDTS` and `__Secure-1PSIDCC` (recommended)
+   - Create a `.env` file from the example:
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit `.env` and paste your cookie values.
 
-   ![Gemini Token Guide](assets/gemini_token_guide.png)
+3. **Start the server (Build locally to ensure architecture compatibility)**:
 
-2. **Create `docker-compose.yml`**:
-
-```yaml
-services:
-  ai-bridges:
-    image: ghcr.io/ntthanh2603/ai-bridges:latest
-    container_name: ai-bridges
-    ports:
-      - "3000:3000"
-    environment:
-      - GEMINI_1PSID=your_1psid_here
-      - GEMINI_1PSIDTS=your_1psidts_here
-      - GEMINI_REFRESH_INTERVAL=30
-      - APP_ENV=production
-    volumes:
-      - ./cookies:/home/appuser/.cookies
-    restart: unless-stopped
-```
-
-3. **Start the server**:
-
-```bash
-docker-compose up -d
-```
+   ```bash
+   docker compose up -d --build
+   ```
 
 4. **Test it**:
 
-```bash
-curl -X POST http://localhost:3000/openai/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gemini-pro", "messages": [{"role": "user", "content": "Hello!"}]}'
-```
+   ```bash
+   curl -X POST http://localhost:3000/openai/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{"model": "gemini-pro", "messages": [{"role": "user", "content": "Hello!"}]}'
+   ```
 
 5. **Done!** Your AI bridge is running at `http://localhost:3000`
 
@@ -87,9 +78,9 @@ docker run -d -p 3000:3000 \
   -v ./cookies:/home/appuser/.cookies \
   --tmpfs /tmp:rw,size=512m \
   --tmpfs /home/appuser/.cache:rw,size=256m \
-  --name ai-bridges \
+  --name gemini-web-to-api \
   --restart unless-stopped \
-  ghcr.io/ntthanh2603/ai-bridges:latest
+  ghcr.io/ntthanh2603/gemini-web-to-api:latest
 ```
 
 ---
@@ -191,29 +182,6 @@ curl -X POST http://localhost:3000/openai/v1/chat/completions \
 
 ---
 
-## 🔧 Building from Source
-
-If you want to modify the code or contribute:
-
-```bash
-# Clone the repository
-git clone https://github.com/ntthanh2603/ai-bridges.git
-cd ai-bridges
-
-# Copy and configure
-cp .env.example .env
-# Edit .env with your cookies
-
-# Run locally
-go run cmd/server/main.go
-
-# Or build binary
-go build -o ai-bridges cmd/server/main.go
-./ai-bridges
-```
-
----
-
 ## 📘 API Documentation
 
 Once running, visit **`http://localhost:3000/swagger/index.html`** for interactive API documentation.
@@ -248,10 +216,10 @@ If you find this project useful, please consider giving it a star! ⭐
 
 ## 🔗 Links
 
-- **GitHub**: [ntthanh2603/ai-bridges](https://github.com/ntthanh2603/ai-bridges)
+- **GitHub**: [ntthanh2603/gemini-web-to-api](https://github.com/ntthanh2603/gemini-web-to-api)
 - **Gemini Web**: [gemini.google.com](https://gemini.google.com)
-- **Docker Hub**: [ghcr.io/ntthanh2603/ai-bridges](https://github.com/ntthanh2603/ai-bridges/pkgs/container/ai-bridges)
-- **Issues**: [Report a bug](https://github.com/ntthanh2603/ai-bridges/issues)
+- **Docker Hub**: [ghcr.io/ntthanh2603/gemini-web-to-api](https://github.com/ntthanh2603/gemini-web-to-api/pkgs/container/gemini-web-to-api)
+- **Issues**: [Report a bug](https://github.com/ntthanh2603/gemini-web-to-api/issues)
 
 ---
 
