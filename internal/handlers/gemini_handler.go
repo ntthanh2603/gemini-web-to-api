@@ -36,6 +36,16 @@ func (h *GeminiHandler) SetLogger(log *zap.Logger) {
 	h.log = log
 }
 
+// IsHealthy returns the health status of the underlying Gemini client
+func (h *GeminiHandler) IsHealthy() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.client == nil {
+		return false
+	}
+	return h.client.IsHealthy()
+}
+
 // --- Official Gemini API (v1beta) ---
 
 // HandleV1BetaModels returns the list of models in Gemini format

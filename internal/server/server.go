@@ -141,11 +141,26 @@ func buildApp(log *zap.Logger, geminiHandler *handlers.GeminiHandler, openaiHand
 	app.Get("/swagger/*", fiberSwagger.WrapHandler)
 
 	app.Get("/health", func(c *fiber.Ctx) error {
+		geminiHealthy := geminiHandler.IsHealthy()
+		status := "ok"
+		if !geminiHealthy {
+			status = "degraded"
+		}
+
 		health := fiber.Map{
-			"status":    "ok",
+			"status":    status,
 			"service":   "ai-bridges",
 			"timestamp": time.Now().Unix(),
+			"providers": fiber.Map{
+				"gemini": fiber.Map{
+					"healthy": geminiHealthy,
+				},
+			},
 		}
+		
+		// If degraded, we still return 200 because the server is running, 
+		// but providing details for monitoring.
+		// If you want Docker to restart the container on Gemini failure, change to 503.
 		return c.JSON(health)
 	})
 

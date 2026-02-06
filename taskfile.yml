@@ -22,4 +22,4 @@ tasks:
     desc: Build the server with auto-swagger update
     deps: [swagger]
     cmds:
-      - go build -o bin/server cmd/server/main.go
+      - go build -o ai-bridges cmd/server/main.go

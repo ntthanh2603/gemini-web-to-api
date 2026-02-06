@@ -19,11 +19,6 @@ services:
     tmpfs:
       - /tmp
       - /home/appuser/.cache
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-          memory: 512M
     healthcheck:
       test:
         [
