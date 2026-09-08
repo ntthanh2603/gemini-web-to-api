@@ -35,6 +35,21 @@ func TestRefreshSessionHealthKeepsHealthyWhenRotationIsRejected(t *testing.T) {
 	}
 }
 
+func TestMergeCookieHeadersPreservesFullSessionAndOverridesAuth(t *testing.T) {
+	got := mergeCookieHeaders(
+		"NID=rollout; __Secure-1PSID=old; SIDCC=account",
+		"__Secure-1PSID=new; __Secure-1PSIDTS=fresh",
+	)
+	for _, want := range []string{"NID=rollout", "SIDCC=account", "__Secure-1PSID=new", "__Secure-1PSIDTS=fresh"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("merged cookies %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "__Secure-1PSID=old") {
+		t.Fatalf("old auth cookie survived override: %q", got)
+	}
+}
+
 func TestRefreshSessionHealthMarksUnhealthyWhenBothChecksFail(t *testing.T) {
 	_, _, healthy := refreshSessionHealth(
 		func() error { return errors.New("rotation failed") },
@@ -87,20 +102,6 @@ func TestParseResponseExtractsGeneratedImages(t *testing.T) {
 	}
 	if resp.Images[0].URL != imageURL {
 		t.Fatalf("expected image URL %q, got %q", imageURL, resp.Images[0].URL)
-	}
-}
-
-func TestResolveAvailableModelAllowsSingleDatedAlias(t *testing.T) {
-	model, ok := resolveAvailableModel("gemini-3-pro-image-preview", []ModelInfo{
-		{ID: "gemini-3-pro-image-preview-11-2025"},
-		{ID: "gemini-3.1-flash-image-preview"},
-	})
-
-	if !ok {
-		t.Fatal("expected model alias to resolve")
-	}
-	if model != "gemini-3-pro-image-preview-11-2025" {
-		t.Fatalf("expected dated model, got %q", model)
 	}
 }
 

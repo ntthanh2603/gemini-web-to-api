@@ -35,16 +35,27 @@ func (s *OpenAIService) ListModels() []providers.ModelInfo {
 	return s.client.ListModels()
 }
 
+func (s *OpenAIService) ResolveModel(model string) (providers.ModelInfo, error) {
+	return s.client.ResolveModel(model)
+}
+
+// ValidateChatCompletion performs checks that must finish before an HTTP
+// streaming response is opened.
+func (s *OpenAIService) ValidateChatCompletion(req dto.ChatCompletionRequest) error {
+	if err := utils.ValidateMessages(req.ToModelMessages()); err != nil {
+		return err
+	}
+	if err := utils.ValidateGenerationRequest(req.Model, req.MaxTokens, req.Temperature); err != nil {
+		return err
+	}
+	_, err := s.client.ResolveModel(req.Model)
+	return err
+}
+
 func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCompletionRequest) (*dto.ChatCompletionResponse, error) {
 	modelMessages := req.ToModelMessages()
 
-	// Logic: Validate messages
-	if err := utils.ValidateMessages(modelMessages); err != nil {
-		return nil, err
-	}
-
-	// Logic: Validate generation parameters
-	if err := utils.ValidateGenerationRequest(req.Model, req.MaxTokens, req.Temperature); err != nil {
+	if err := s.ValidateChatCompletion(req); err != nil {
 		return nil, err
 	}
 
@@ -114,10 +125,11 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 
 	// Logic: Construct Response
 	return &dto.ChatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   req.Model,
+		ID:             fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
+		Object:         "chat.completion",
+		Created:        time.Now().Unix(),
+		Model:          response.Model,
+		RequestedModel: response.RequestedModel,
 		Choices: []dto.Choice{
 			{
 				Index:        0,
@@ -242,7 +254,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 				ID:      chunkID,
 				Object:  "chat.completion.chunk",
 				Created: created,
-				Model:   req.Model,
+				Model:   response.Model,
 				Choices: []dto.ChunkChoice{{Index: 0, Delta: delta}},
 			}) {
 				return nil
@@ -254,7 +266,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 			ID:      chunkID,
 			Object:  "chat.completion.chunk",
 			Created: created,
-			Model:   req.Model,
+			Model:   response.Model,
 			Choices: []dto.ChunkChoice{{Index: 0, FinishReason: "tool_calls"}},
 		})
 		return nil
@@ -268,7 +280,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 				ID:      chunkID,
 				Object:  "chat.completion.chunk",
 				Created: created,
-				Model:   req.Model,
+				Model:   response.Model,
 				Choices: []dto.ChunkChoice{{
 					Index: 0,
 					Delta: dto.ChatCompletionChunkDelta{ReasoningContent: content},
@@ -288,7 +300,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 			ID:      chunkID,
 			Object:  "chat.completion.chunk",
 			Created: created,
-			Model:   req.Model,
+			Model:   response.Model,
 			Choices: []dto.ChunkChoice{{Index: 0, Delta: dto.ChatCompletionChunkDelta{Content: content}}},
 		}) {
 			return nil
@@ -303,7 +315,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 		ID:      chunkID,
 		Object:  "chat.completion.chunk",
 		Created: created,
-		Model:   req.Model,
+		Model:   response.Model,
 		Choices: []dto.ChunkChoice{{Index: 0, FinishReason: choice.FinishReason}},
 	})
 

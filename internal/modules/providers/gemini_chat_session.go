@@ -1,10 +1,6 @@
 package providers
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-)
+import "context"
 
 // GeminiChatSession implements ChatSession interface for Gemini.
 type GeminiChatSession struct {
@@ -16,63 +12,10 @@ type GeminiChatSession struct {
 
 // SendMessage sends a message in the chat session.
 func (s *GeminiChatSession) SendMessage(ctx context.Context, message string, options ...GenerateOption) (*Response, error) {
-	config := &GenerateConfig{}
-	for _, opt := range options {
-		opt(config)
-	}
-
-	s.client.mu.RLock()
-	at := s.client.at
-	cookieHdr := s.client.cookieHeader
-	s.client.mu.RUnlock()
-
-	if at == "" {
-		return nil, fmt.Errorf("client not initialized")
-	}
-
-	uploadedFiles, err := s.client.uploadRequestFiles(ctx, config, cookieHdr)
-	if err != nil {
-		return nil, err
-	}
-
-	messageContent := []interface{}{message}
-	if len(uploadedFiles) > 0 {
-		fileData := make([]interface{}, 0, len(uploadedFiles))
-		for _, file := range uploadedFiles {
-			fileData = append(fileData, []interface{}{[]interface{}{file.ID}, file.Name})
-		}
-		messageContent = []interface{}{message, 0, nil, fileData, nil, nil, 0}
-	}
-
-	inner := []interface{}{
-		messageContent,
-		nil,
-		s.buildMetadata(),
-	}
-
-	innerJSON, _ := json.Marshal(inner)
-	outer := []interface{}{nil, string(innerJSON)}
-	outerJSON, _ := json.Marshal(outer)
-
-	formData := map[string]string{
-		"at":    at,
-		"f.req": string(outerJSON),
-	}
-
-	resp, err := s.client.httpClient.R().
-		SetContext(ctx).
-		SetFormData(formData).
-		SetQueryParam("at", at).
-		Post(EndpointGenerate)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("chat failed with status: %d", resp.StatusCode)
-	}
-
-	response, err := s.client.parseResponse(resp.String())
+	// Apply the session model before per-message options so an explicit override
+	// still works, and share the same model selection and upload path as the APIs.
+	opts := append([]GenerateOption{WithModel(s.model)}, options...)
+	response, err := s.client.generateContent(ctx, message, s.buildMetadata(), opts...)
 	if err != nil {
 		return nil, err
 	}

@@ -5,12 +5,14 @@ from pathlib import Path
 
 client = OpenAI(
     base_url="http://localhost:4981/openai/v1",
-    api_key="sk-123"
+    api_key="not-needed"
 )
 
 def image_generation_example():
+    # Inspect client.models.list() for the account's selectable web models.
+    # gemini-pro selects Pro; unavailable Pro returns an error.
     response = client.images.generate(
-        model="gemini-3-pro-image-preview",
+        model="gemini-pro",
         prompt="A cinematic cyberpunk rabbit wearing a yellow raincoat, neon city, high detail",
         n=1,
         size="1024x1024",

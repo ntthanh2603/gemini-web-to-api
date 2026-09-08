@@ -45,7 +45,7 @@ func (h *ClaudeController) HandleModels(c fiber.Ctx) error {
 			"id":           m.ID,
 			"type":         "model",
 			"created_at":   m.Created,
-			"display_name": m.ID,
+			"display_name": m.DisplayName,
 		})
 	}
 	return c.JSON(fiber.Map{
@@ -64,11 +64,17 @@ func (h *ClaudeController) HandleModels(c fiber.Ctx) error {
 // @Router /claude/v1/models/{model_id} [get]
 func (h *ClaudeController) HandleModelByID(c fiber.Ctx) error {
 	modelID := c.Params("model_id")
+	model, err := h.service.ResolveModel(modelID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"type": "error", "error": fiber.Map{"type": "not_found_error", "message": err.Error()},
+		})
+	}
 	return c.JSON(fiber.Map{
-		"id":           modelID,
+		"id":           model.ID,
 		"type":         "model",
-		"created_at":   time.Now().Unix(),
-		"display_name": modelID,
+		"created_at":   model.Created,
+		"display_name": model.DisplayName,
 	})
 }
 
@@ -91,6 +97,11 @@ func (h *ClaudeController) HandleMessages(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"type":  "error",
 			"error": fiber.Map{"type": "invalid_request_error", "message": "Invalid JSON body"},
+		})
+	}
+	if err := h.service.ValidateMessage(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"type": "error", "error": fiber.Map{"type": "invalid_request_error", "message": err.Error()},
 		})
 	}
 

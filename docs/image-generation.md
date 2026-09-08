@@ -14,13 +14,21 @@ This fork adds working extraction and authenticated downloading of images genera
 
 ## Text-to-image
 
+Use `gemini-pro` when your account offers Pro, or choose another model returned by `GET /openai/v1/models`:
+
+```bash
+curl http://localhost:4981/openai/v1/models
+```
+
+The list comes from the signed-in account's Gemini Web model registry. `gemini-advanced` also selects Pro; either Pro name returns an error when Pro is unavailable. Other names are accepted only when they are discovered from the account, so old Gemini API version names are not mapped to a potentially different web model.
+
 ### cURL
 
 ```bash
 curl http://localhost:4981/openai/v1/images/generations \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "gemini-3-pro-image-preview-11-2025",
+    "model": "gemini-pro",
     "prompt": "Generate an image of a red apple on a white plate.",
     "size": "1024x1024",
     "n": 1,
@@ -51,7 +59,7 @@ import requests
 response = requests.post(
     "http://localhost:4981/openai/v1/images/generations",
     json={
-        "model": "gemini-3-pro-image-preview-11-2025",
+        "model": "gemini-pro",
         "prompt": "Generate an image of a red apple on a white plate.",
         "size": "1024x1024",
         "n": 1,
@@ -78,7 +86,7 @@ client = OpenAI(
 )
 
 response = client.images.generate(
-    model="gemini-3-pro-image-preview-11-2025",
+    model="gemini-pro",
     prompt="Generate an image of a red apple on a white plate.",
     size="1024x1024",
     response_format="b64_json",
@@ -108,7 +116,7 @@ def data_url(path: str, mime_type: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 response = client.chat.completions.create(
-    model="gemini-3-pro-image-preview-11-2025",
+    model="gemini-pro",
     messages=[
         {
             "role": "user",
@@ -162,7 +170,7 @@ The implementation has been verified with:
 
 ## Limitations
 
-- Image model names are discovered from Gemini Web and can change.
+- Selectable web models are discovered per account and can change; image generation also depends on account access and the prompt.
 - `n > 1` may require multiple upstream generations.
 - Some prompts may return text without an image.
 - Generated-image URLs in chat responses are session-bound and may expire.
@@ -171,7 +179,7 @@ The implementation has been verified with:
 
 ## Security
 
-`GEMINI_1PSID` and `GEMINI_1PSIDTS` grant access to the Google session used by the bridge.
+`GEMINI_COOKIES` grants access to the Google session used by the bridge.
 
 - Never commit cookies or a populated `.env` file.
 - Bind the service to localhost unless you add your own authentication layer.

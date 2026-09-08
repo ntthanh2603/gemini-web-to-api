@@ -64,15 +64,17 @@
 > Keep these values secure and **never share or commit them** — they provide direct access to your Google account.
 
 1. Go to [gemini.google.com](https://gemini.google.com) and sign in
-2. Press `F12` → **Application** → **Storage** → **Cookies**
-3. Copy the values of `__Secure-1PSID` and `__Secure-1PSIDTS`
+2. Press `F12` → **Network**, reload Gemini, and select a
+   `batchexecute?rpcids=otAQ7b` request
+3. Copy its complete `Cookie` request header. If the request URL contains an
+   account slot such as `/u/2/`, also use `GEMINI_AUTH_USER="2"` below.
 
 **Step 2 — Run**
 
 ```bash
 docker run -d -p 4981:4981 \
-  -e GEMINI_1PSID="your_psid_here" \
-  -e GEMINI_1PSIDTS="your_psidts_here" \
+  -e GEMINI_COOKIES="your_complete_cookie_header" \
+  -e GEMINI_AUTH_USER="2" \
   -e GEMINI_REFRESH_INTERVAL=30 \
   -e GEMINI_MAX_RETRIES=3 \
   -e GEMINI_TEMPORARY=false \
@@ -109,19 +111,23 @@ cd gemini-web-to-api
 > Keep these values secure and **never commit your `.env` file** — it contains credentials that provide access to your Google account.
 
 1. Go to [gemini.google.com](https://gemini.google.com) and sign in
-2. Press `F12` → **Application** → **Storage** → **Cookies**
-3. Copy the values of `__Secure-1PSID` and `__Secure-1PSIDTS`
-4. Create your `.env` from the example:
+2. Press `F12` → **Network**, reload Gemini, and select a
+   `batchexecute?rpcids=otAQ7b` request
+3. Copy its complete `Cookie` request header into `GEMINI_COOKIES`.
+4. Match `GEMINI_AUTH_USER` to the request URL. For example, use `2` when the
+   URL contains `/u/2/`; leave it empty when there is no `/u/<number>/`.
+   Always take the cookie and account slot from the same browser tab.
+5. Create your `.env` from the example:
 
    ```bash
    cp .env.example .env
    ```
 
-5. Paste your cookie values into `.env`:
+6. Paste the values into `.env`:
 
    ```env
-   GEMINI_1PSID=your_psid_here
-   GEMINI_1PSIDTS=your_psidts_here
+   GEMINI_COOKIES=your_complete_cookie_header
+   GEMINI_AUTH_USER=2
    GEMINI_REFRESH_INTERVAL=30
    GEMINI_MAX_RETRIES=3
    GEMINI_TEMPORARY=false
@@ -178,8 +184,8 @@ See [Image generation and image inputs](docs/image-generation.md) for tested exa
 
 | Variable                  | Required | Default | Description                                        |
 | ------------------------- | -------- | ------- | -------------------------------------------------- |
-| `GEMINI_1PSID`            | ✅ Yes   | —       | Main session cookie from Gemini                    |
-| `GEMINI_1PSIDTS`          | ✅ Yes   | —       | Timestamp cookie (prevents auth errors)            |
+| `GEMINI_COOKIES`          | ✅ Yes   | —       | Complete Cookie request header copied from the Gemini Web tab |
+| `GEMINI_AUTH_USER`        | ❌ No    | —       | Google account slot from the Gemini URL, e.g. `2` for `/u/2/app` |
 | `GEMINI_REFRESH_INTERVAL` | ❌ No    | `30`    | Cookie rotation interval (minutes)                 |
 | `GEMINI_MAX_RETRIES`      | ❌ No    | `3`     | Max retry attempts when an API call fails          |
 | `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests   |
@@ -197,6 +203,36 @@ See [Image generation and image inputs](docs/image-generation.md) for tested exa
 ---
 
 ## 🧪 Usage Examples
+
+### Model selection
+
+The provider discovers selectable models and their internal IDs from the signed-in account's Gemini Web model registry during session initialization and refresh. List the current choices with:
+
+```bash
+curl http://localhost:4981/openai/v1/models
+```
+
+Use a returned model ID in your requests. IDs are derived from Gemini's current
+display labels, such as `gemini-3.6-flash` and `gemini-3.1-pro`; they are not a
+fixed allowlist. Every selectable registry entry is returned, so newly added
+Gemini models become available without a code update. Category names returned
+by Gemini remain aliases, and `gemini-advanced` is retained as a compatibility
+alias for the discovered Pro category. An unavailable or unknown name returns
+an error instead of silently selecting another model.
+
+Model names are not seeded locally. When Google adds, removes, or renames a model, use the names returned by this endpoint instead of relying on old Gemini API version names.
+
+The `model` field in a completion response contains the resolved versioned
+model ID (for example, a `gemini-advanced` request currently returns
+`gemini-3.1-pro`). Generated self-introductions are ordinary model output and
+can still be inaccurate.
+
+Gemini Web may silently serve a lower-tier model after the selected model's
+quota is exhausted. The proxy detects an unambiguous different model ID in the
+protocol response and reports that model in `model`. The original caller value
+is preserved in `requested_model`. This keeps the response truthful without
+blocking a model that Gemini still advertises as selectable; after its quota
+resets, `model` returns to the requested version.
 
 ### OpenAI SDK (Python)
 
@@ -233,18 +269,26 @@ print(response.content)
 ### Gemini Native SDK (Python)
 
 ```python
-import google.generativeai as genai
+from google import genai
 
-genai.configure(
+client = genai.Client(
     api_key="not-needed",
-    transport="rest",
-    client_options={"api_endpoint": "http://localhost:4981/gemini"}
+    http_options={
+        "base_url": "http://localhost:4981/gemini",
+        "api_version": "v1beta",
+    },
 )
 
-model = genai.GenerativeModel("gemini-advanced")
-response = model.generate_content("Write a poem about coding")
+response = client.models.generate_content(
+    model="gemini-advanced",
+    contents="Write a poem about coding",
+)
 print(response.text)
 ```
+
+Install the maintained SDK with `pip install google-genai`. Both regular
+generation and `generate_content_stream` are supported; the latter uses the
+SDK's `alt=sse` transport.
 
 ### cURL
 

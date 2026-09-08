@@ -30,6 +30,10 @@ func (s *GeminiService) ListModels() []providers.ModelInfo {
 	return s.client.ListModels()
 }
 
+func (s *GeminiService) ResolveModel(model string) (providers.ModelInfo, error) {
+	return s.client.ResolveModel(model)
+}
+
 func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req dto.GeminiGenerateRequest) (*dto.GeminiGenerateResponse, error) {
 	// Logic: Extract prompt
 	var promptBuilder strings.Builder

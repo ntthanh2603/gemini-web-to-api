@@ -3,12 +3,14 @@ package openai
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	models "gemini-web-to-api/internal/commons/models"
 	utils "gemini-web-to-api/internal/commons/utils"
 	"gemini-web-to-api/internal/modules/openai/dto"
+	"gemini-web-to-api/internal/modules/providers"
 
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
@@ -38,10 +40,11 @@ func (h *OpenAIController) GetModelData() []models.ModelData {
 	var data []models.ModelData
 	for _, m := range availableModels {
 		data = append(data, models.ModelData{
-			ID:      m.ID,
-			Object:  "model",
-			Created: m.Created,
-			OwnedBy: m.OwnedBy,
+			ID:          m.ID,
+			Object:      "model",
+			Created:     m.Created,
+			OwnedBy:     m.OwnedBy,
+			DisplayName: m.DisplayName,
 		})
 	}
 	return data
@@ -64,6 +67,23 @@ func (h *OpenAIController) HandleModels(c fiber.Ctx) error {
 	})
 }
 
+// HandleModel returns one model using the same resolution rules as generation.
+func (h *OpenAIController) HandleModel(c fiber.Ctx) error {
+	model, err := h.service.ResolveModel(c.Params("model"))
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
+	}
+	return c.JSON(models.ModelData{ID: model.ID, Object: "model", Created: model.Created, OwnedBy: model.OwnedBy, DisplayName: model.DisplayName})
+}
+
+func openAIRequestError(c fiber.Ctx, err error) error {
+	var modelErr *providers.ModelSelectionError
+	if errors.As(err, &modelErr) {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
+	}
+	return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorToResponse(err, "api_error"))
+}
+
 // HandleChatCompletions accepts requests in OpenAI format
 // @Summary Chat Completions (OpenAI)
 // @Description Generates a completion for the chat message. Supports both standard JSON and streaming (SSE) response.
@@ -81,6 +101,9 @@ func (h *OpenAIController) HandleChatCompletions(c fiber.Ctx) error {
 	var req dto.ChatCompletionRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("invalid request body: %w", err), "invalid_request_error"))
+	}
+	if err := h.service.ValidateChatCompletion(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
 	}
 
 	if req.Stream {
@@ -127,7 +150,7 @@ func (h *OpenAIController) HandleChatCompletions(c fiber.Ctx) error {
 	response, err := h.service.CreateChatCompletion(ctx, req)
 	if err != nil {
 		h.log.Error("CreateChatCompletion failed", zap.Error(err), zap.String("model", req.Model))
-		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorToResponse(err, "api_error"))
+		return openAIRequestError(c, err)
 	}
 
 	return c.JSON(response)
@@ -159,7 +182,7 @@ func (h *OpenAIController) HandleImageGenerations(c fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
 		}
 		h.log.Error("CreateImageGeneration failed", zap.Error(err), zap.String("model", req.Model))
-		return c.Status(fiber.StatusInternalServerError).JSON(utils.ErrorToResponse(err, "api_error"))
+		return openAIRequestError(c, err)
 	}
 
 	return c.JSON(response)
@@ -168,6 +191,7 @@ func (h *OpenAIController) HandleImageGenerations(c fiber.Ctx) error {
 // Register registers the OpenAI routes onto the provided group
 func (c *OpenAIController) Register(group fiber.Router) {
 	group.Get("/models", c.HandleModels)
+	group.Get("/models/:model", c.HandleModel)
 	group.Post("/chat/completions", c.HandleChatCompletions)
 	group.Post("/images/generations", c.HandleImageGenerations)
 }

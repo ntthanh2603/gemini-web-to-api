@@ -76,11 +76,27 @@ func (h *GeminiController) HandleV1BetaModels(c fiber.Ctx) error {
 	for _, m := range availableModels {
 		geminiModels = append(geminiModels, dto.GeminiModel{
 			Name:                       "models/" + m.ID,
-			DisplayName:                m.ID,
+			DisplayName:                m.DisplayName,
 			SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent"},
 		})
 	}
 	return c.JSON(dto.GeminiModelsResponse{Models: geminiModels})
+}
+
+// HandleV1BetaModel returns one dynamically discovered Gemini model.
+func (h *GeminiController) HandleV1BetaModel(c fiber.Ctx) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	model, err := h.service.ResolveModel(c.Params("model"))
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(common.ErrorToResponse(err, "invalid_request_error"))
+	}
+	return c.JSON(dto.GeminiModel{
+		Name:                       "models/" + model.ID,
+		DisplayName:                model.DisplayName,
+		SupportedGenerationMethods: []string{"generateContent", "streamGenerateContent"},
+	})
 }
 
 // HandleV1BetaGenerateContent handles the official Gemini generateContent endpoint
@@ -101,6 +117,9 @@ func (h *GeminiController) HandleV1BetaGenerateContent(c fiber.Ctx) error {
 	var req dto.GeminiGenerateRequest
 	if err := c.Bind().Body(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(common.ErrorToResponse(fmt.Errorf("invalid request body: %w", err), "invalid_request_error"))
+	}
+	if _, err := h.service.ResolveModel(model); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(common.ErrorToResponse(err, "invalid_request_error"))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -137,15 +156,26 @@ func (h *GeminiController) HandleV1BetaStreamGenerateContent(c fiber.Ctx) error 
 	if err := c.Bind().Body(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(common.ErrorToResponse(fmt.Errorf("invalid request body: %w", err), "invalid_request_error"))
 	}
+	if _, err := h.service.ResolveModel(model); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(common.ErrorToResponse(err, "invalid_request_error"))
+	}
 
-	c.Set("Content-Type", "application/json")
-	c.Set("Transfer-Encoding", "chunked")
+	useSSE := c.Query("alt") == "sse"
+	if useSSE {
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+	} else {
+		c.Set("Content-Type", "application/x-ndjson")
+	}
 
 	c.RequestCtx().SetBodyStreamWriter(func(w *bufio.Writer) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
 		err := h.service.GenerateContentStream(ctx, model, req, func(resp dto.GeminiGenerateResponse) bool {
+			if useSSE {
+				return common.SendSSEEvent(w, h.log, resp)
+			}
 			return common.SendStreamChunk(w, h.log, resp) == nil
 		})
 		if err != nil {
@@ -312,6 +342,7 @@ func (h *GeminiController) HandleInteractionGet(c fiber.Ctx) error {
 // Register registers the Gemini routes on the provided router
 func (g *GeminiController) Register(group fiber.Router) {
 	group.Get("/models", g.HandleV1BetaModels)
+	group.Get("/models/:model", g.HandleV1BetaModel)
 	group.Post("/models/:model\\:generateContent", g.HandleV1BetaGenerateContent)
 	group.Post("/models/:model\\:streamGenerateContent", g.HandleV1BetaStreamGenerateContent)
 	group.Post("/deepresearch", g.HandleDeepResearch)

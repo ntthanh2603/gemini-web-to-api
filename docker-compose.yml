@@ -9,10 +9,6 @@ services:
     environment:
       - PORT=4981
       - APP_ENV=production
-      - GEMINI_1PSID=${GEMINI_1PSID}
-      - GEMINI_1PSIDTS=${GEMINI_1PSIDTS}
-      - GEMINI_REFRESH_INTERVAL=30
-      - GEMINI_MAX_RETRIES=3
     restart: unless-stopped
     tmpfs:
       - /tmp

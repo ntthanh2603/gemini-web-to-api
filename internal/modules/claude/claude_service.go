@@ -32,9 +32,21 @@ func (s *ClaudeService) ListModels() []providers.ModelInfo {
 	return s.client.ListModels()
 }
 
+func (s *ClaudeService) ResolveModel(model string) (providers.ModelInfo, error) {
+	return s.client.ResolveModel(model)
+}
+
+func (s *ClaudeService) ValidateMessage(req dto.MessageRequest) error {
+	if err := common.ValidateMessages(req.Messages); err != nil {
+		return err
+	}
+	_, err := s.client.ResolveModel(req.Model)
+	return err
+}
+
 func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequest) (*dto.MessageResponse, error) {
 	// Logic: Validate
-	if err := common.ValidateMessages(req.Messages); err != nil {
+	if err := s.ValidateMessage(req); err != nil {
 		return nil, err
 	}
 
@@ -94,7 +106,7 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		ID:         msgID,
 		Type:       "message",
 		Role:       "assistant",
-		Model:      req.Model,
+		Model:      response.Model,
 		Content:    resContent,
 		StopReason: stopReason,
 		Usage: models.Usage{
@@ -118,7 +130,7 @@ func (s *ClaudeService) GenerateMessageStream(ctx context.Context, req dto.Messa
 			ID:    response.ID,
 			Type:  "message",
 			Role:  "assistant",
-			Model: req.Model,
+			Model: response.Model,
 			Usage: response.Usage,
 		},
 	}) {

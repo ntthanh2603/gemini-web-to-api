@@ -15,3 +15,10 @@ tasks:
     desc: Build the server binary
     cmds:
       - go build -o gemini-web-to-api cmd/server/main.go
+
+  e2e:
+    desc: Run live end-to-end tests using Gemini cookies from .env
+    env:
+      E2E: "1"
+    cmds:
+      - go test ./tests/e2e -v -count=1 -timeout 15m
