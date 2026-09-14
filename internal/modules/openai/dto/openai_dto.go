@@ -29,8 +29,10 @@ type ChatCompletionMessage struct {
 
 func (m *ChatCompletionMessage) UnmarshalJSON(data []byte) error {
 	type rawMessage struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string            `json:"role"`
+		Content    json.RawMessage   `json:"content"`
+		ToolCalls  []json.RawMessage `json:"tool_calls,omitempty"`
+		ToolCallID string            `json:"tool_call_id,omitempty"`
 	}
 
 	var raw rawMessage
@@ -41,6 +43,47 @@ func (m *ChatCompletionMessage) UnmarshalJSON(data []byte) error {
 	m.Role = raw.Role
 	m.Content = ""
 	m.Attachments = nil
+
+	// Check if this is an OpenAI tool result message (role = tool)
+	if raw.ToolCallID != "" {
+		var contentStr string
+		if len(raw.Content) > 0 && string(raw.Content) != "null" {
+			if err := json.Unmarshal(raw.Content, &contentStr); err == nil {
+				m.Content = fmt.Sprintf("[Tool Result for ID %s]: %s", raw.ToolCallID, contentStr)
+			} else {
+				m.Content = fmt.Sprintf("[Tool Result for ID %s]: %s", raw.ToolCallID, string(raw.Content))
+			}
+		} else {
+			m.Content = fmt.Sprintf("[Tool Result for ID %s]: ", raw.ToolCallID)
+		}
+		return nil
+	}
+
+	// Check if this is an OpenAI assistant message containing tool calls
+	if len(raw.ToolCalls) > 0 {
+		var textParts []string
+		var contentStr string
+		if len(raw.Content) > 0 && string(raw.Content) != "null" {
+			if err := json.Unmarshal(raw.Content, &contentStr); err == nil && contentStr != "" {
+				textParts = append(textParts, contentStr)
+			}
+		}
+		for _, tcRaw := range raw.ToolCalls {
+			var tc struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			}
+			if err := json.Unmarshal(tcRaw, &tc); err == nil {
+				textParts = append(textParts, fmt.Sprintf("[Call Tool: %s with ID %s and Input: %s]", tc.Function.Name, tc.ID, tc.Function.Arguments))
+			}
+		}
+		m.Content = strings.Join(textParts, "\n")
+		return nil
+	}
 
 	if len(raw.Content) == 0 || string(raw.Content) == "null" {
 		return nil

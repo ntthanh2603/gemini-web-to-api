@@ -273,9 +273,15 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 	}
 
 	// Case 2: Regular Text
+	firstChunk := true
 	if choice.Message.ReasoningContent != "" {
 		reasoningChunks := utils.SplitResponseIntoChunks(choice.Message.ReasoningContent, 30)
 		for _, content := range reasoningChunks {
+			delta := dto.ChatCompletionChunkDelta{ReasoningContent: content}
+			if firstChunk {
+				delta.Role = "assistant"
+				firstChunk = false
+			}
 			if !onEvent(dto.ChatCompletionChunk{
 				ID:      chunkID,
 				Object:  "chat.completion.chunk",
@@ -283,7 +289,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 				Model:   response.Model,
 				Choices: []dto.ChunkChoice{{
 					Index: 0,
-					Delta: dto.ChatCompletionChunkDelta{ReasoningContent: content},
+					Delta: delta,
 				}},
 			}) {
 				return nil
@@ -296,12 +302,17 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 
 	chunks := utils.SplitResponseIntoChunks(choice.Message.Content, 30)
 	for _, content := range chunks {
+		delta := dto.ChatCompletionChunkDelta{Content: content}
+		if firstChunk {
+			delta.Role = "assistant"
+			firstChunk = false
+		}
 		if !onEvent(dto.ChatCompletionChunk{
 			ID:      chunkID,
 			Object:  "chat.completion.chunk",
 			Created: created,
 			Model:   response.Model,
-			Choices: []dto.ChunkChoice{{Index: 0, Delta: dto.ChatCompletionChunkDelta{Content: content}}},
+			Choices: []dto.ChunkChoice{{Index: 0, Delta: delta}},
 		}) {
 			return nil
 		}
@@ -487,44 +498,7 @@ func decodeToolBridgePayload(text string) (toolBridgePayload, bool) {
 }
 
 func extractFirstJSONObject(text string) string {
-	start := strings.Index(text, "{")
-	if start < 0 {
-		return ""
-	}
-
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(text); i++ {
-		ch := text[i]
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' {
-				escaped = true
-				continue
-			}
-			if ch == '"' {
-				inString = false
-			}
-			continue
-		}
-
-		switch ch {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return strings.TrimSpace(text[start : i+1])
-			}
-		}
-	}
-	return ""
+	return utils.ExtractFirstJSONObject(text)
 }
 
 func normalizeArguments(raw json.RawMessage) string {

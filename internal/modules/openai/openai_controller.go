@@ -21,10 +21,10 @@ type OpenAIController struct {
 	log     *zap.Logger
 }
 
-func NewOpenAIController(service *OpenAIService) *OpenAIController {
+func NewOpenAIController(service *OpenAIService, log *zap.Logger) *OpenAIController {
 	return &OpenAIController{
 		service: service,
-		log:     zap.NewNop(),
+		log:     log,
 	}
 }
 
