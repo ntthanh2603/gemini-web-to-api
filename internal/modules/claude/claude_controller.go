@@ -17,10 +17,10 @@ type ClaudeController struct {
 	log     *zap.Logger
 }
 
-func NewClaudeController(service *ClaudeService) *ClaudeController {
+func NewClaudeController(service *ClaudeService, log *zap.Logger) *ClaudeController {
 	return &ClaudeController{
 		service: service,
-		log:     zap.NewNop(),
+		log:     log,
 	}
 }
 
@@ -116,7 +116,7 @@ func (h *ClaudeController) HandleMessages(c fiber.Ctx) error {
 			defer cancel()
 
 			err := h.service.GenerateMessageStream(ctx, req, func(ev dto.StreamEvent) bool {
-				return common.SendSSEEvent(w, h.log, ev)
+				return common.SendSSEChunk(w, h.log, ev.Type, ev) == nil
 			})
 			if err != nil {
 				h.log.Error("GenerateMessageStream failed", zap.Error(err), zap.String("model", req.Model))
@@ -127,7 +127,7 @@ func (h *ClaudeController) HandleMessages(c fiber.Ctx) error {
 						Message: err.Error(),
 					},
 				}
-				_ = common.SendSSEEvent(w, h.log, errEv)
+				_ = common.SendSSEChunk(w, h.log, "error", errEv)
 			}
 		})
 

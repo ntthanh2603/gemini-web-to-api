@@ -275,7 +275,10 @@ func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text strin
 	}
 
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
-		return nil, text
+		obj := common.ExtractFirstJSONObject(text)
+		if obj == "" || json.Unmarshal([]byte(obj), &payload) != nil {
+			return nil, text
+		}
 	}
 
 	if payload.Status == "tool_use" && len(payload.ToolCalls) > 0 {
