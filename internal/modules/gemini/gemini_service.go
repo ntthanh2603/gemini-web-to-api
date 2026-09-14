@@ -35,40 +35,9 @@ func (s *GeminiService) ResolveModel(model string) (providers.ModelInfo, error) 
 }
 
 func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req dto.GeminiGenerateRequest) (*dto.GeminiGenerateResponse, error) {
-	// Logic: Extract prompt
-	var promptBuilder strings.Builder
-	inputFiles := make([]providers.InputFile, 0)
-	for _, content := range req.Contents {
-		for i, part := range content.Parts {
-			if part.Text != "" {
-				promptBuilder.WriteString(part.Text)
-				promptBuilder.WriteString("\n")
-			}
-			if part.InlineData != nil && part.InlineData.Data != "" {
-				data, err := providers.DecodeBase64Data(part.InlineData.Data)
-				if err != nil {
-					return nil, fmt.Errorf("decode inline_data: %w", err)
-				}
-				inputFiles = append(inputFiles, providers.InputFile{
-					Name:     fmt.Sprintf("inline_%d%s", i+1, extensionForMimeType(part.InlineData.MimeType)),
-					MimeType: part.InlineData.MimeType,
-					Data:     data,
-				})
-			}
-		}
-	}
-
-	prompt := strings.TrimSpace(promptBuilder.String())
-	if prompt == "" && len(inputFiles) == 0 {
-		return nil, fmt.Errorf("empty content")
-	}
-	if prompt == "" {
-		prompt = fmt.Sprintf("[%d file(s) attached]", len(inputFiles))
-	}
-
-	hasTools := len(req.Tools) > 0
-	if hasTools {
-		prompt = s.buildToolBridgePrompt(req, prompt)
+	prompt, inputFiles, err := s.buildPrompt(req)
+	if err != nil {
+		return nil, err
 	}
 
 	// Logic: Call Provider
@@ -89,7 +58,7 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 		resParts = append(resParts, dto.Part{Text: response.ReasoningText, Thought: true})
 	}
 
-	if hasTools {
+	if len(req.Tools) > 0 {
 		functionCalls, content := s.parseToolBridgeOutput(req, response.Text)
 		if len(functionCalls) > 0 {
 			for _, fc := range functionCalls {
@@ -131,6 +100,76 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 			TotalTokenCount: 0,
 		},
 	}, nil
+}
+
+func (s *GeminiService) buildPrompt(req dto.GeminiGenerateRequest) (string, []providers.InputFile, error) {
+	var promptBuilder strings.Builder
+
+	// Support system_instruction
+	if req.SystemInstruction != nil {
+		var sysText strings.Builder
+		for _, part := range req.SystemInstruction.Parts {
+			if part.Text != "" {
+				sysText.WriteString(part.Text)
+				sysText.WriteString(" ")
+			}
+		}
+		if trimmedSys := strings.TrimSpace(sysText.String()); trimmedSys != "" {
+			promptBuilder.WriteString(fmt.Sprintf("System: %s\n\n", trimmedSys))
+		}
+	}
+
+	inputFiles := make([]providers.InputFile, 0)
+	isMultiTurn := len(req.Contents) > 1
+	for _, content := range req.Contents {
+		rolePrefix := ""
+		if isMultiTurn {
+			switch strings.ToLower(strings.TrimSpace(content.Role)) {
+			case "model", "assistant":
+				rolePrefix = "Model: "
+			case "system":
+				rolePrefix = "System: "
+			default:
+				rolePrefix = "User: "
+			}
+		}
+
+		for i, part := range content.Parts {
+			if part.Text != "" {
+				if rolePrefix != "" {
+					promptBuilder.WriteString(rolePrefix)
+					rolePrefix = ""
+				}
+				promptBuilder.WriteString(part.Text)
+				promptBuilder.WriteString("\n")
+			}
+			if part.InlineData != nil && part.InlineData.Data != "" {
+				data, err := providers.DecodeBase64Data(part.InlineData.Data)
+				if err != nil {
+					return "", nil, fmt.Errorf("decode inline_data: %w", err)
+				}
+				inputFiles = append(inputFiles, providers.InputFile{
+					Name:     fmt.Sprintf("inline_%d%s", i+1, extensionForMimeType(part.InlineData.MimeType)),
+					MimeType: part.InlineData.MimeType,
+					Data:     data,
+				})
+			}
+		}
+	}
+
+	prompt := strings.TrimSpace(promptBuilder.String())
+	if prompt == "" && len(inputFiles) == 0 {
+		return "", nil, fmt.Errorf("empty content")
+	}
+	if prompt == "" {
+		prompt = fmt.Sprintf("[%d file(s) attached]", len(inputFiles))
+	}
+
+	if len(req.Tools) > 0 {
+		prompt = s.buildToolBridgePrompt(req, prompt)
+	}
+
+	return prompt, inputFiles, nil
 }
 
 func extensionForMimeType(mimeType string) string {
@@ -263,7 +302,10 @@ func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, tex
 	}
 
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
-		return nil, text
+		obj := utils.ExtractFirstJSONObject(text)
+		if obj == "" || json.Unmarshal([]byte(obj), &payload) != nil {
+			return nil, text
+		}
 	}
 
 	if payload.Status == "call" && len(payload.ToolCalls) > 0 {

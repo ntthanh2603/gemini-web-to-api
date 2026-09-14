@@ -17,28 +17,46 @@ import (
 )
 
 type GeminiController struct {
-	service *GeminiService
-	log     *zap.Logger
-	mu      sync.RWMutex
-	store   *taskStore
+	service  *GeminiService
+	log      *zap.Logger
+	mu       sync.RWMutex
+	store    *taskStore
+	stopChan chan struct{}
 }
 
-func NewGeminiController(service *GeminiService) *GeminiController {
+func NewGeminiController(service *GeminiService, log *zap.Logger) *GeminiController {
 	store := newTaskStore()
+	stopChan := make(chan struct{})
 
 	// Start background job to purge old tasks periodically
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
-		for range ticker.C {
-			store.purgeOlderThan(24 * time.Hour)
+		for {
+			select {
+			case <-ticker.C:
+				store.purgeOlderThan(24 * time.Hour)
+			case <-stopChan:
+				return
+			}
 		}
 	}()
 
 	return &GeminiController{
-		service: service,
-		log:     zap.NewNop(),
-		store:   store,
+		service:  service,
+		log:      log,
+		store:    store,
+		stopChan: stopChan,
+	}
+}
+
+// Close terminates background tasks
+func (h *GeminiController) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopChan != nil {
+		close(h.stopChan)
+		h.stopChan = nil
 	}
 }
 
@@ -180,7 +198,11 @@ func (h *GeminiController) HandleV1BetaStreamGenerateContent(c fiber.Ctx) error 
 		})
 		if err != nil {
 			h.log.Error("GenerateContentStream failed", zap.Error(err), zap.String("model", model))
-			_ = common.SendStreamChunk(w, h.log, common.ErrorToResponse(err, "api_error"))
+			if useSSE {
+				_ = common.SendSSEEvent(w, h.log, common.ErrorToResponse(err, "api_error"))
+			} else {
+				_ = common.SendStreamChunk(w, h.log, common.ErrorToResponse(err, "api_error"))
+			}
 		}
 	})
 

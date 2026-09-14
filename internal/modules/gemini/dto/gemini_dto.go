@@ -18,11 +18,28 @@ type GeminiModel struct {
 
 // GeminiGenerateRequest represents a Gemini generate request
 type GeminiGenerateRequest struct {
-	Contents         []Content           `json:"contents"`
-	Tools            []Tool              `json:"tools,omitempty"`
-	ToolConfig       *ToolConfig         `json:"tool_config,omitempty"`
-	GenerationConfig *GenerationConfig   `json:"generationConfig,omitempty"`
-	Safety           []map[string]string `json:"safety_settings,omitempty"`
+	Contents          []Content           `json:"contents"`
+	SystemInstruction *Content            `json:"system_instruction,omitempty"`
+	Tools             []Tool              `json:"tools,omitempty"`
+	ToolConfig        *ToolConfig         `json:"tool_config,omitempty"`
+	GenerationConfig  *GenerationConfig   `json:"generationConfig,omitempty"`
+	Safety            []map[string]string `json:"safety_settings,omitempty"`
+}
+
+func (r *GeminiGenerateRequest) UnmarshalJSON(data []byte) error {
+	type alias GeminiGenerateRequest
+	var raw struct {
+		alias
+		SystemInstructionCamel *Content `json:"systemInstruction"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*r = GeminiGenerateRequest(raw.alias)
+	if r.SystemInstruction == nil && raw.SystemInstructionCamel != nil {
+		r.SystemInstruction = raw.SystemInstructionCamel
+	}
+	return nil
 }
 
 // Content represents a content block in Gemini API

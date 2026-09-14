@@ -1,20 +1,26 @@
 package gemini
 
 import (
-	"gemini-web-to-api/internal/modules/providers"
+	"context"
 
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/fx"
 )
 
 var Module = fx.Options(
-	fx.Provide(providers.NewClient),
 	fx.Provide(NewGeminiService),
 	fx.Provide(NewGeminiController),
 	fx.Invoke(RegisterRoutes),
 )
 
-func RegisterRoutes(app *fiber.App, c *GeminiController) {
+func RegisterRoutes(lc fx.Lifecycle, app *fiber.App, c *GeminiController) {
+	lc.Append(fx.Hook{
+		OnStop: func(context.Context) error {
+			c.Close()
+			return nil
+		},
+	})
+
 	// Gemini routes (prefixed with /gemini)
 	geminiGroup := app.Group("/gemini")
 	geminiV1 := geminiGroup.Group("/v1beta")
