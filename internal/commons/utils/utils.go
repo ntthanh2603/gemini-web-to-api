@@ -130,17 +130,88 @@ func SendSSEEvent(w *bufio.Writer, log *zap.Logger, v interface{}) bool {
 }
 
 // SplitResponseIntoChunks simulates streaming by splitting response into chunks
+// while preserving all whitespace, newlines, and formatting (strings.Join(chunks, "") == text).
 func SplitResponseIntoChunks(text string, delayMs int) []string {
-	words := strings.Split(text, " ")
+	if text == "" {
+		return nil
+	}
+	runes := []rune(text)
 	var chunks []string
-	for i, word := range words {
-		content := word
-		if i < len(words)-1 {
-			content += " "
+	start := 0
+	targetChunkSize := 8
+
+	for start < len(runes) {
+		end := start + targetChunkSize
+		if end >= len(runes) {
+			chunks = append(chunks, string(runes[start:]))
+			break
 		}
-		chunks = append(chunks, content)
+		// Try to find a whitespace boundary near target size
+		boundary := -1
+		for i := end; i < len(runes) && i <= end+10; i++ {
+			if runes[i] == ' ' || runes[i] == '\n' || runes[i] == '\t' {
+				boundary = i + 1
+				break
+			}
+		}
+		if boundary == -1 {
+			for i := end; i > start; i-- {
+				if runes[i] == ' ' || runes[i] == '\n' || runes[i] == '\t' {
+					boundary = i + 1
+					break
+				}
+			}
+		}
+		if boundary <= start || boundary > len(runes) {
+			boundary = end
+		}
+		chunks = append(chunks, string(runes[start:boundary]))
+		start = boundary
 	}
 	return chunks
+}
+
+// ExtractFirstJSONObject finds and extracts the first balanced top-level JSON object from text.
+func ExtractFirstJSONObject(text string) string {
+	start := strings.Index(text, "{")
+	if start < 0 {
+		return ""
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return text[start : i+1]
+			}
+		}
+	}
+
+	return ""
 }
 
 // SleepWithCancel sleeps for the specified duration or until context is cancelled

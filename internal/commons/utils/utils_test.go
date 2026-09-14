@@ -47,3 +47,57 @@ func TestExtractThinkingAndText(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitResponseIntoChunks(t *testing.T) {
+	tests := []string{
+		"Hello world, this is a test.",
+		"Code indentation:\n    def foo():\n        return True\n",
+		"Non-spaced string: 1234567890abcdefghijklmnopqrstuvwxyz",
+		"Tiếng Việt có dấu và ký tự đặc biệt: xin chào các bạn!",
+		"",
+	}
+
+	for _, text := range tests {
+		chunks := SplitResponseIntoChunks(text, 30)
+		if text == "" {
+			if len(chunks) != 0 {
+				t.Errorf("expected empty chunks for empty string, got %v", chunks)
+			}
+			continue
+		}
+		joined := ""
+		for _, c := range chunks {
+			joined += c
+		}
+		if joined != text {
+			t.Errorf("SplitResponseIntoChunks() reconstructed = %q, want %q", joined, text)
+		}
+	}
+}
+
+func TestExtractFirstJSONObject(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{
+			input: `Here is the JSON: {"name": "test", "val": 123} and some trailing text`,
+			want:  `{"name": "test", "val": 123}`,
+		},
+		{
+			input: "```json\n{\"nested\": {\"key\": \"value with \\\"escaped\\\" quotes\"}}\n```",
+			want:  `{"nested": {"key": "value with \"escaped\" quotes"}}`,
+		},
+		{
+			input: `No json object here`,
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		got := ExtractFirstJSONObject(tt.input)
+		if got != tt.want {
+			t.Errorf("ExtractFirstJSONObject() = %q, want %q", got, tt.want)
+		}
+	}
+}
