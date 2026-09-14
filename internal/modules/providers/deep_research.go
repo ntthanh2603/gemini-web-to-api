@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"gemini-web-to-api/internal/commons/utils"
+
 	"go.uber.org/zap"
 )
 
@@ -585,17 +587,21 @@ func (c *Client) DeepResearchStream(ctx context.Context, query string, cb Progre
 }
 
 // --------------------------------------------------------------------------
-// Helpers
-// --------------------------------------------------------------------------
+var (
+	deepResearchJSONRegex     = regexp.MustCompile(`(?s)\{.*\}`)
+	deepResearchSanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9]`)
+)
 
 func extractJSON(text string) string {
+	if obj := utils.ExtractFirstJSONObject(text); obj != "" {
+		return obj
+	}
 	s := strings.TrimSpace(text)
 	s = strings.TrimPrefix(s, "```json")
 	s = strings.TrimPrefix(s, "```")
 	s = strings.TrimSuffix(s, "```")
 	s = strings.TrimSpace(s)
-	re := regexp.MustCompile(`(?s)\{.*\}`)
-	if m := re.FindString(s); m != "" {
+	if m := deepResearchJSONRegex.FindString(s); m != "" {
 		return m
 	}
 	return s
@@ -628,6 +634,5 @@ func generateResearchID(query string, ts int64) string {
 }
 
 func sanitizeIDPart(s string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9]`)
-	return strings.ToLower(re.ReplaceAllString(s, ""))
+	return strings.ToLower(deepResearchSanitizeRegex.ReplaceAllString(s, ""))
 }

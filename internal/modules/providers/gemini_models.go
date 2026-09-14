@@ -381,6 +381,10 @@ func geminiInteger(value any) (int, bool) {
 		return result, err == nil
 	case int:
 		return number, true
+	case int64:
+		return int(number), true
+	case float64:
+		return int(number), true
 	default:
 		return 0, false
 	}

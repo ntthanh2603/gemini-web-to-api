@@ -8,6 +8,7 @@ import (
 )
 
 var Module = fx.Options(
+	fx.Provide(NewClient),
 	fx.Provide(NewProviderManager),
 	fx.Invoke(RegisterProvider),
 )

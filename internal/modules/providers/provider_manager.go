@@ -3,12 +3,14 @@ package providers
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"go.uber.org/zap"
 )
 
-// Factory is a simple factory for creating providers
+// Factory is a thread-safe factory for creating providers
 type Factory struct {
+	mu        sync.RWMutex
 	providers map[string]Provider
 }
 
@@ -21,21 +23,38 @@ func NewFactory() *Factory {
 
 // Register registers a provider with a name
 func (f *Factory) Register(name string, provider Provider) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.providers[name] = provider
 }
 
 // Get returns a provider by name
 func (f *Factory) Get(name string) Provider {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.providers[name]
 }
 
 // List returns all registered provider names
 func (f *Factory) List() []string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	var names []string
 	for name := range f.providers {
 		names = append(names, name)
 	}
 	return names
+}
+
+// All returns a copy of the providers map for safe iteration
+func (f *Factory) All() map[string]Provider {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	all := make(map[string]Provider, len(f.providers))
+	for k, v := range f.providers {
+		all[k] = v
+	}
+	return all
 }
 
 // ProviderManager manages provider instances
@@ -91,7 +110,7 @@ func (pm *ProviderManager) ListProviders() []string {
 
 // InitAllProviders initializes all registered providers (non-blocking - logs warnings on failure)
 func (pm *ProviderManager) InitAllProviders(ctx context.Context) {
-	for name, provider := range pm.factory.providers {
+	for name, provider := range pm.factory.All() {
 		if err := provider.Init(ctx); err != nil {
 			// For Gemini specifically, log a more detailed error since authentication issues are common
 			if name == "gemini" {
@@ -112,7 +131,7 @@ func (pm *ProviderManager) InitAllProviders(ctx context.Context) {
 
 // CloseAllProviders closes all registered providers
 func (pm *ProviderManager) CloseAllProviders() error {
-	for name, provider := range pm.factory.providers {
+	for name, provider := range pm.factory.All() {
 		if err := provider.Close(); err != nil {
 			pm.log.Error("Failed to close provider", zap.String("provider", name), zap.Error(err))
 		}

@@ -192,8 +192,12 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	// 2. Prepare the full browser session. GEMINI_COOKIES carries rollout and
 	// account-selection cookies that 1PSID/1PSIDTS alone may not reproduce.
 	// Explicit auth values win if the same names occur in the full header.
+	c.cookies.mu.RLock()
+	psid := c.cookies.Secure1PSID
+	psidts := c.cookies.Secure1PSIDTS
+	c.cookies.mu.RUnlock()
 	cookieStr := mergeCookieHeaders(extraCookies, c.configuredCookieHeader,
-		fmt.Sprintf("__Secure-1PSID=%s; __Secure-1PSIDTS=%s", c.cookies.Secure1PSID, c.cookies.Secure1PSIDTS))
+		fmt.Sprintf("__Secure-1PSID=%s; __Secure-1PSIDTS=%s", psid, psidts))
 
 	commonHeaders := map[string]string{
 		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -264,7 +268,6 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	req2.Header.Set("Sec-Fetch-Site", "same-origin")
 	req2.Header.Set("Cookie", cookieStr)
 	req2.Header.Set("Referer", "https://gemini.google.com/")
-	req2.Header.Set("Accept-Encoding", "gzip, deflate, br")
 
 	resp, err := hClient.Do(req2)
 	if err != nil {
