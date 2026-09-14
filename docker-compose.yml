@@ -10,6 +10,8 @@ services:
       - PORT=4981
       - APP_ENV=production
     restart: unless-stopped
+    volumes:
+      - ./.cookies:/home/appuser/.cookies
     tmpfs:
       - /tmp
       - /home/appuser/.cache
