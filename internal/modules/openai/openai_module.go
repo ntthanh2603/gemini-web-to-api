@@ -9,6 +9,7 @@ var Module = fx.Options(
 	fx.Provide(NewOpenAIService),
 	fx.Provide(NewOpenAIController),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(registerVideoRoutes),
 )
 
 func RegisterRoutes(app *fiber.App, c *OpenAIController) {

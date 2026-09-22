@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "✨Reverse-engineered API for Gemini web app. It can be used as a genuine API key from OpenAI, Gemini, and Claude.",
+        "description": "\u2728Reverse-engineered API for Gemini web app. It can be used as a genuine API key from OpenAI, Gemini, and Claude.",
         "title": "Gemini Web To API",
         "contact": {},
         "version": "1.0"
@@ -385,6 +385,117 @@
                         "schema": {
                             "$ref": "#/definitions/gemini-web-to-api_internal_commons_models.ModelListResponse"
                         }
+                    }
+                }
+            }
+        },
+        "/openai/v1/videos": {
+            "post": {
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Create an experimental Gemini video job",
+                "description": "JSON only. One active job per process. Saved conversation required. No Sora compatibility or duration/resolution controls. Poll the returned ID; do not repeatedly submit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "parameters": [
+                    {
+                        "in": "body",
+                        "name": "request",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/VideoRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Job accepted",
+                        "schema": {
+                            "$ref": "#/definitions/VideoJob"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request or model"
+                    },
+                    "429": {
+                        "description": "Active job or storage limit reached"
+                    },
+                    "500": {
+                        "description": "Storage error"
+                    },
+                    "503": {
+                        "description": "Shutting down"
+                    }
+                }
+            }
+        },
+        "/openai/v1/videos/{id}": {
+            "get": {
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Get video job status",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Job status",
+                        "schema": {
+                            "$ref": "#/definitions/VideoJob"
+                        }
+                    },
+                    "404": {
+                        "description": "Job missing or expired"
+                    }
+                }
+            }
+        },
+        "/openai/v1/videos/{id}/content": {
+            "get": {
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Download a completed MP4",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "produces": [
+                    "video/mp4"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "MP4",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Job missing or expired"
+                    },
+                    "409": {
+                        "description": "Job not completed"
+                    },
+                    "410": {
+                        "description": "File unavailable"
                     }
                 }
             }
@@ -1109,6 +1220,77 @@
                     "items": {
                         "type": "integer"
                     }
+                }
+            }
+        },
+        "VideoRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "prompt"
+            ],
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Text prompt, 1 to 8000 UTF-8 bytes."
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Gemini model name or alias; not a Sora model."
+                }
+            }
+        },
+        "VideoJob": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "object": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "in_progress",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "model": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "integer"
+                },
+                "expires_at": {
+                    "type": "integer"
+                },
+                "content_url": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string"
+                        },
+                        "message": {
+                            "type": "string"
+                        },
+                        "provider_message": {
+                            "type": "string",
+                            "description": "Provider explanation with URLs removed."
+                        }
+                    }
+                },
+                "conversation_id": {
+                    "type": "string",
+                    "description": "Gemini conversation reference, when returned by the provider."
+                },
+                "provider_message": {
+                    "type": "string",
+                    "description": "Initial provider explanation, bounded and with URLs removed."
                 }
             }
         }

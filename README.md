@@ -357,3 +357,7 @@ If you find this project useful, please consider giving it a star! ⭐
 ---
 
 **Created with ❤️ by [@ntthanh2603](https://github.com/ntthanh2603)**
+
+### Experimental video generation
+
+Text-to-video jobs, status polling, and MP4 download are available as an experimental Gemini Web extension. See [video generation](docs/video-generation.md) for account requirements, Windows CMD examples, and limitations.

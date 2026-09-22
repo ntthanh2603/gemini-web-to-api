@@ -531,6 +531,9 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 
 	requestID := strings.ToUpper(uuid.NewString())
 	inner := buildGenerateInner(prompt, uploadedFiles, selectedModel.ModelNumber, language, requestID, c.defaultTemporary)
+	if config.videoGeneration {
+		inner[45] = nil // Video completion requires conversation history.
+	}
 	if metadata != nil {
 		inner[2] = metadata
 	}
@@ -563,6 +566,9 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	generateURL := geminiAccountURL(EndpointGenerate, c.authUser) + "?" + queryValues.Encode()
 
 	maxAttempts := c.maxRetries
+	if config.videoGeneration {
+		maxAttempts = 1
+	}
 	if maxAttempts <= 0 {
 		maxAttempts = 1
 	}
@@ -611,6 +617,9 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		httpResp, err := plainClient.Do(httpReq)
 		httpDuration := time.Since(httpStart)
 		if err != nil {
+			if config.videoGeneration {
+				return nil, videoError("upstream_error", "Gemini request failed; check Gemini Web before retrying because generation may have started")
+			}
 			c.log.Warn("Generate request failed, will retry",
 				zap.Error(err),
 				zap.Duration("http_duration", httpDuration),
@@ -621,7 +630,20 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		}
 		if httpResp.StatusCode != http.StatusOK {
 			bodySnippet, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
+			if config.videoGeneration {
+				bodySnippet = nil
+			}
 			_ = httpResp.Body.Close()
+			if config.videoGeneration {
+				switch httpResp.StatusCode {
+				case http.StatusUnauthorized, http.StatusForbidden:
+					return nil, videoError("access_denied", "Gemini denied video access; verify the browser session and account eligibility")
+				case http.StatusTooManyRequests:
+					return nil, videoError("rate_limited", "Gemini limited this request; check video quota in Gemini Web and wait before retrying")
+				default:
+					return nil, videoError("upstream_error", fmt.Sprintf("Gemini video request returned HTTP %d; check Gemini Web before retrying", httpResp.StatusCode))
+				}
+			}
 			lastErr = fmt.Errorf("generate failed with status: %d", httpResp.StatusCode)
 			c.log.Warn("Generate returned non-200",
 				zap.Int("status", httpResp.StatusCode),
@@ -634,16 +656,26 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			return nil, lastErr
 		}
 
-		respBytes, err := io.ReadAll(httpResp.Body)
+		var responseReader io.Reader = httpResp.Body
+		if config.videoGeneration {
+			responseReader = io.LimitReader(httpResp.Body, 32<<20)
+		}
+		respBytes, err := io.ReadAll(responseReader)
 		_ = httpResp.Body.Close()
-		if err != nil {
+		if err != nil && !config.videoGeneration {
 			lastErr = fmt.Errorf("failed to read generate response: %w", err)
 			continue
 		}
 		respBody := string(respBytes)
 
 		parseStart := time.Now()
-		result, parseErr := c.parseResponse(respBody)
+		var result *Response
+		var parseErr error
+		if config.videoGeneration {
+			result, parseErr = parseVideoGeneration(respBytes)
+		} else {
+			result, parseErr = c.parseResponse(respBody)
+		}
 		parseDuration := time.Since(parseStart)
 
 		if parseErr != nil {
