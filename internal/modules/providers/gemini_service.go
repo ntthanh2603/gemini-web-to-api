@@ -34,6 +34,7 @@ type Client struct {
 	httpClient             *req.Client
 	cookies                *CookieStore
 	configuredCookieHeader string // optional full browser Cookie header for rollout/session flags
+	initialConfigPSIDTS    string
 	authUser               string // Google multi-login slot used by the Gemini Web tab (for example "2")
 	at                     string
 	cookieHeader           string // full Cookie header string built by refreshSessionToken, used in GenerateContent
@@ -87,14 +88,19 @@ func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
 		SetCommonHeaders(DefaultHeaders)
 
 	refreshIntervalMinutes := cfg.Gemini.RefreshInterval
-	if refreshIntervalMinutes <= 0 {
-		refreshIntervalMinutes = defaultRefreshIntervalMinutes
+	if refreshIntervalMinutes <= 0 || refreshIntervalMinutes > 15 {
+		log.Info("GEMINI_REFRESH_INTERVAL adjusted to 10 minutes for reliable keepalive",
+			zap.Int("configured_minutes", refreshIntervalMinutes),
+			zap.Int("effective_minutes", 10),
+		)
+		refreshIntervalMinutes = 10
 	}
 
 	return &Client{
 		httpClient:             client,
 		cookies:                cookies,
 		configuredCookieHeader: strings.TrimSpace(cfg.Gemini.Cookies),
+		initialConfigPSIDTS:    cleanCookie(cfg.Gemini.Secure1PSIDTS),
 		authUser:               strings.TrimSpace(cfg.Gemini.AuthUser),
 		autoRefresh:            true,
 		refreshInterval:        time.Duration(refreshIntervalMinutes) * time.Minute,
@@ -111,18 +117,21 @@ func (c *Client) Init(ctx context.Context) error {
 	configPSIDTS := cleanCookie(c.cookies.Secure1PSIDTS) // Save original config value
 	c.cookies.Secure1PSIDTS = configPSIDTS
 
-	// Check if we should use cached cookies or clear cache
+	usedCache := false
 	if c.cookies.Secure1PSID != "" {
-		cachedTS, err := c.LoadCachedCookies()
-
-		// If config has a new PSIDTS that differs from cache, clear cache and use config
-		if configPSIDTS != "" && cachedTS != "" && configPSIDTS != cachedTS {
-			_ = c.ClearCookieCache()
-			// Keep using the config value (already set above)
-		} else if err == nil && cachedTS != "" && configPSIDTS == "" {
-			// Only use cache if config doesn't provide PSIDTS
-			c.cookies.Secure1PSIDTS = cachedTS
-			c.log.Info("Loaded __Secure-1PSIDTS from cache")
+		cachedEntry, err := c.LoadCachedEntry()
+		if err == nil && cachedEntry != nil && cachedEntry.Secure1PSIDTS != "" {
+			if configPSIDTS != "" && cachedEntry.ConfigPSIDTS != "" && configPSIDTS != cachedEntry.ConfigPSIDTS && configPSIDTS != cachedEntry.Secure1PSIDTS {
+				c.log.Info("Configuration changed with new __Secure-1PSIDTS; clearing old cache")
+				_ = c.ClearCookieCache()
+			} else {
+				c.cookies.Secure1PSIDTS = cachedEntry.Secure1PSIDTS
+				if cachedEntry.CookieHeader != "" {
+					c.configuredCookieHeader = mergeCookieHeaders(c.configuredCookieHeader, cachedEntry.CookieHeader)
+				}
+				usedCache = true
+				c.log.Info("Loaded rotated session cookies from cache", zap.Time("cached_at", cachedEntry.UpdatedAt))
+			}
 		}
 	}
 
@@ -143,12 +152,23 @@ func (c *Client) Init(ctx context.Context) error {
 	err := c.refreshSessionToken(ctx)
 	if err != nil {
 		c.log.Debug("Initial session token fetch failed, attempting cookie rotation", zap.Error(err))
-		// Try to rotate cookies and retry
 		if rotErr := c.RotateCookies(); rotErr == nil {
 			c.log.Debug("Cookie rotation succeeded, retrying session token fetch")
 			err = c.refreshSessionToken(ctx)
 		} else {
 			c.log.Debug("Cookie rotation failed", zap.Error(rotErr))
+		}
+
+		if err != nil && usedCache && configPSIDTS != "" && configPSIDTS != c.cookies.Secure1PSIDTS {
+			c.log.Info("Cached session token fetch failed; retrying with original config credentials from .env")
+			_ = c.ClearCookieCache()
+			c.cookies.Secure1PSIDTS = configPSIDTS
+			c.httpClient.SetCommonCookies(c.cookies.ToHTTPCookies()...)
+			if rotErr := c.RotateCookies(); rotErr == nil {
+				err = c.refreshSessionToken(ctx)
+			} else {
+				err = c.refreshSessionToken(ctx)
+			}
 		}
 	}
 
@@ -254,9 +274,7 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	resp1_direct, _ := hClient.Do(req1)
 	if resp1_direct != nil {
 		cookieStr = mergeCookies(cookieStr, resp1_direct.Cookies())
-		for _, ck := range resp1_direct.Cookies() {
-			c.httpClient.SetCommonCookies(ck)
-		}
+		c.updateCookies(resp1_direct.Cookies())
 		resp1_direct.Body.Close()
 	}
 
@@ -293,6 +311,7 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 
 	// Merge cookies from the init response into cookieStr
 	cookieStr = mergeCookies(cookieStr, resp.Cookies())
+	c.updateCookies(resp.Cookies())
 
 	matches := accessTokenRegex.FindStringSubmatch(body)
 	if len(matches) < 2 {
@@ -338,6 +357,7 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	c.mu.Lock()
 	c.at = matches[1]
 	c.cookieHeader = cookieStr // save full cookie string for use in GenerateContent
+	c.configuredCookieHeader = mergeCookieHeaders(c.configuredCookieHeader, cookieStr)
 	c.pushID = pushID
 	c.buildLabel = buildLabel
 	c.sessionID = sessionID
@@ -353,6 +373,17 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 
 // startAutoRefresh periodically refreshes the PSIDTS cookie
 func (c *Client) startAutoRefresh() {
+	// Proactively run an initial keep-alive after 15 seconds in case the imported cookie is near expiry
+	initialTimer := time.NewTimer(15 * time.Second)
+	select {
+	case <-initialTimer.C:
+		c.log.Debug("Running initial post-startup cookie keep-alive")
+		_ = c.RotateCookies()
+	case <-c.stopRefresh:
+		initialTimer.Stop()
+		return
+	}
+
 	ticker := time.NewTicker(c.refreshInterval)
 	defer ticker.Stop()
 
@@ -403,65 +434,194 @@ func refreshSessionHealth(rotate, refreshToken func() error) (rotateErr, session
 }
 
 func (c *Client) RotateCookies() error {
-	c.cookies.mu.Lock()
-	defer c.cookies.mu.Unlock()
+	c.cookies.mu.RLock()
+	psid := c.cookies.Secure1PSID
+	psidts := c.cookies.Secure1PSIDTS
+	c.cookies.mu.RUnlock()
 
-	// Prepare cookies for rotation request
-	// NOTE: We access fields directly instead of using ToHTTPCookies() to avoid recursive locking (deadlock)
-	parts := []string{}
-	if c.cookies.Secure1PSID != "" {
-		parts = append(parts, fmt.Sprintf("__Secure-1PSID=%s", c.cookies.Secure1PSID))
+	if psid == "" {
+		return errors.New("cannot rotate cookies without __Secure-1PSID")
 	}
-	if c.cookies.Secure1PSIDTS != "" {
-		parts = append(parts, fmt.Sprintf("__Secure-1PSIDTS=%s", c.cookies.Secure1PSIDTS))
+
+	// 1. Sentinel [000,"-0000000000000000000"] rotation
+	// Google requires only __Secure-1PSID and __Secure-1PSIDTS (other cookies cause 401)
+	parts := []string{fmt.Sprintf("__Secure-1PSID=%s", psid)}
+	if psidts != "" {
+		parts = append(parts, fmt.Sprintf("__Secure-1PSIDTS=%s", psidts))
 	}
 	cookieStr := strings.Join(parts, "; ")
 
-	// Payload must be exactly this string
 	strBody := `[000,"-0000000000000000000"]`
-	req, _ := http.NewRequest("POST", EndpointRotateCookies, strings.NewReader(strBody))
+	req, err := http.NewRequest("POST", EndpointRotateCookies, strings.NewReader(strBody))
+	if err != nil {
+		return err
+	}
 
+	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Content-Type", "application/json")
-	// Google often blocks requests with default Go-http-client User-Agent
+	req.Header.Set("Origin", "https://accounts.google.com")
+	req.Header.Set("Referer", "https://accounts.google.com/")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Cookie", cookieStr)
 
 	c.log.Debug("Sending rotation request", zap.String("url", EndpointRotateCookies))
-	hClient := &http.Client{Timeout: 5 * time.Second}
+	hClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := hClient.Do(req)
 	if err != nil {
-		// Log as Info to avoid scary stacktraces in development mode for expected auth failures
 		c.log.Info("Rotation request failed (network/auth issue)", zap.String("error", err.Error()))
 		return fmt.Errorf("failed to call rotation endpoint: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.log.Info("Rotation failed (likely invalid __Secure-1PSID)", zap.Int("status", resp.StatusCode))
+		c.log.Info("Rotation failed", zap.Int("status", resp.StatusCode))
 		return fmt.Errorf("rotation failed with status %d", resp.StatusCode)
 	}
 
-	// Extract new PSIDTS from Set-Cookie headers
+	respCookies := resp.Cookies()
 	found := false
-	for _, cookie := range resp.Cookies() {
+	for _, cookie := range respCookies {
 		if cookie.Name == "__Secure-1PSIDTS" {
-			c.cookies.Secure1PSIDTS = cookie.Value
-			c.cookies.UpdatedAt = time.Now()
 			found = true
-			// Save the new cookie to cache immediately
-			_ = c.SaveCachedCookies()
+			break
 		}
-		// Sync to req/v3 client for future calls
-		c.httpClient.SetCommonCookies(cookie)
 	}
 
+	c.updateCookies(respCookies)
+
+	// 2. Also run SIDCC iframe rotation
+	c.rotateSIDCC()
+
 	if found {
-		c.log.Info("Cookie rotated successfully", zap.Time("updated_at", c.cookies.UpdatedAt))
+		c.cookies.mu.RLock()
+		updatedAt := c.cookies.UpdatedAt
+		c.cookies.mu.RUnlock()
+		c.log.Info("Cookie rotated successfully", zap.Time("updated_at", updatedAt))
 	} else {
-		// Google returns 200 but omits a new cookie when the existing one is still valid — not an error
 		c.log.Debug("No new __Secure-1PSIDTS issued; existing cookie is still valid")
 	}
 	return nil
+}
+
+var rotateInitRe = regexp.MustCompile(`init\('([^']{4,64})'\s*,\s*([0-9.]+)\s*,[^)]*?([0-9.]+)\s*\)`)
+
+func (c *Client) rotateSIDCC() {
+	c.mu.RLock()
+	cookieHdr := c.cookieHeader
+	c.mu.RUnlock()
+	if cookieHdr == "" {
+		return
+	}
+
+	pageURL := "https://accounts.google.com/RotateCookiesPage?og_pid=658&rot=3&origin=https%3A%2F%2Fgemini.google.com&exp_id=0"
+	req1, err := http.NewRequest("GET", pageURL, nil)
+	if err != nil {
+		return
+	}
+	req1.Header.Set("Cookie", cookieHdr)
+	req1.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req1.Header.Set("Referer", "https://gemini.google.com/")
+	req1.Header.Set("Sec-Fetch-Dest", "iframe")
+	req1.Header.Set("Sec-Fetch-Mode", "navigate")
+	req1.Header.Set("Sec-Fetch-Site", "same-site")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp1, err := client.Do(req1)
+	if err != nil {
+		return
+	}
+	defer resp1.Body.Close()
+
+	if len(resp1.Cookies()) > 0 {
+		c.updateCookies(resp1.Cookies())
+	}
+
+	if resp1.StatusCode != http.StatusOK {
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(resp1.Body)
+	if err != nil {
+		return
+	}
+
+	m := rotateInitRe.FindSubmatch(bodyBytes)
+	if len(m) < 2 {
+		return
+	}
+	sessionID := string(m[1])
+
+	postBody := fmt.Sprintf(`[658,"%s"]`, sessionID)
+	req2, err := http.NewRequest("POST", EndpointRotateCookies, strings.NewReader(postBody))
+	if err != nil {
+		return
+	}
+	c.mu.RLock()
+	currentCookieHdr := c.cookieHeader
+	c.mu.RUnlock()
+
+	req2.Header.Set("Accept", "*/*")
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Origin", "https://accounts.google.com")
+	req2.Header.Set("Referer", pageURL)
+	req2.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req2.Header.Set("Sec-Fetch-Dest", "empty")
+	req2.Header.Set("Sec-Fetch-Mode", "same-origin")
+	req2.Header.Set("Sec-Fetch-Site", "same-origin")
+	req2.Header.Set("Cookie", currentCookieHdr)
+
+	resp2, err := client.Do(req2)
+	if err != nil {
+		return
+	}
+	defer resp2.Body.Close()
+
+	if len(resp2.Cookies()) > 0 {
+		c.updateCookies(resp2.Cookies())
+		c.log.Debug("SIDCC rotated successfully")
+	}
+}
+
+func (c *Client) updateCookies(cookies []*http.Cookie) {
+	if len(cookies) == 0 {
+		return
+	}
+	c.cookies.mu.Lock()
+	updated := false
+	var parts []string
+	for _, ck := range cookies {
+		if ck.Value == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", ck.Name, ck.Value))
+		if ck.Name == "__Secure-1PSIDTS" && ck.Value != "" {
+			c.cookies.Secure1PSIDTS = ck.Value
+			c.cookies.UpdatedAt = time.Now()
+			updated = true
+		}
+	}
+	c.cookies.mu.Unlock()
+
+	if len(parts) > 0 {
+		cookieSnippet := strings.Join(parts, "; ")
+		c.mu.Lock()
+		c.cookieHeader = mergeCookieHeaders(c.cookieHeader, cookieSnippet)
+		c.configuredCookieHeader = mergeCookieHeaders(c.configuredCookieHeader, cookieSnippet)
+		c.mu.Unlock()
+	}
+
+	for _, ck := range cookies {
+		c.httpClient.SetCommonCookies(ck)
+	}
+
+	if updated {
+		_ = c.SaveCachedCookies()
+	}
 }
 
 func (c *Client) GetCookies() *CookieStore {
@@ -619,6 +779,11 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			lastErr = err
 			continue
 		}
+
+		if len(httpResp.Cookies()) > 0 {
+			c.updateCookies(httpResp.Cookies())
+		}
+
 		if httpResp.StatusCode != http.StatusOK {
 			bodySnippet, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
 			_ = httpResp.Body.Close()
@@ -628,6 +793,12 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 				zap.String("body_snippet", string(bodySnippet)),
 				zap.Int("attempt", attempt),
 			)
+			if httpResp.StatusCode == 401 || httpResp.StatusCode == 403 {
+				c.log.Warn("Gemini returned unauthorized, attempting cookie rotation and retry", zap.Int("status", httpResp.StatusCode))
+				if rotErr := c.RotateCookies(); rotErr == nil {
+					continue
+				}
+			}
 			if httpResp.StatusCode >= 500 {
 				continue
 			}
@@ -1327,64 +1498,128 @@ func mergeCookieHeaders(headers ...string) string {
 	return strings.Join(parts, "; ")
 }
 
-// LoadCachedCookies attempts to read the saved 1PSIDTS from disk
-func (c *Client) LoadCachedCookies() (string, error) {
-	if c.cookies.Secure1PSID == "" {
-		return "", errors.New("no PSID available")
+type CookieCacheEntry struct {
+	Secure1PSIDTS string    `json:"1psidts"`
+	Secure3PSIDTS string    `json:"3psidts,omitempty"`
+	CookieHeader  string    `json:"cookie_header,omitempty"`
+	ConfigPSIDTS  string    `json:"config_psidts,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// LoadCachedEntry attempts to read saved session cookies from disk
+func (c *Client) LoadCachedEntry() (*CookieCacheEntry, error) {
+	c.cookies.mu.RLock()
+	psid := c.cookies.Secure1PSID
+	c.cookies.mu.RUnlock()
+	if psid == "" {
+		return nil, errors.New("no PSID available")
 	}
 
-	hash := sha256.Sum256([]byte(c.cookies.Secure1PSID))
-	filename := filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
+	hash := sha256.Sum256([]byte(psid))
+	hashHex := hex.EncodeToString(hash[:])
+	jsonPath := filepath.Join(".cookies", hashHex+".json")
+	if data, err := os.ReadFile(jsonPath); err == nil {
+		var entry CookieCacheEntry
+		if err := json.Unmarshal(data, &entry); err == nil && entry.Secure1PSIDTS != "" {
+			return &entry, nil
+		}
+	}
 
-	data, err := os.ReadFile(filename)
+	// Fallback to legacy .txt
+	txtPath := filepath.Join(".cookies", hashHex+".txt")
+	if data, err := os.ReadFile(txtPath); err == nil {
+		ts := strings.TrimSpace(string(data))
+		if ts != "" {
+			return &CookieCacheEntry{
+				Secure1PSIDTS: ts,
+				UpdatedAt:     time.Now(),
+			}, nil
+		}
+	}
+
+	return nil, errors.New("no valid cookie cache found")
+}
+
+// LoadCachedCookies attempts to read the saved 1PSIDTS from disk
+func (c *Client) LoadCachedCookies() (string, error) {
+	entry, err := c.LoadCachedEntry()
 	if err != nil {
 		return "", err
 	}
-
-	ts := strings.TrimSpace(string(data))
-	if ts == "" {
-		return "", errors.New("empty cache file")
-	}
-	return ts, nil
+	return entry.Secure1PSIDTS, nil
 }
 
-// SaveCachedCookies writes the current 1PSIDTS to disk
+// SaveCachedCookies writes the current session cookies to disk
 func (c *Client) SaveCachedCookies() error {
-	if c.cookies.Secure1PSID == "" || c.cookies.Secure1PSIDTS == "" {
+	c.cookies.mu.RLock()
+	psid := c.cookies.Secure1PSID
+	psidts := c.cookies.Secure1PSIDTS
+	updatedAt := c.cookies.UpdatedAt
+	c.cookies.mu.RUnlock()
+
+	c.mu.RLock()
+	cookieHdr := c.cookieHeader
+	c.mu.RUnlock()
+
+	if psid == "" || psidts == "" {
 		return nil
 	}
 
-	// Create directory if not exists
 	if err := os.MkdirAll(".cookies", 0755); err != nil {
 		return err
 	}
 
-	hash := sha256.Sum256([]byte(c.cookies.Secure1PSID))
-	filename := filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
+	hash := sha256.Sum256([]byte(psid))
+	hashHex := hex.EncodeToString(hash[:])
+	jsonPath := filepath.Join(".cookies", hashHex+".json")
+	txtPath := filepath.Join(".cookies", hashHex+".txt")
 
-	err := os.WriteFile(filename, []byte(c.cookies.Secure1PSIDTS), 0600)
+	entry := CookieCacheEntry{
+		Secure1PSIDTS: psidts,
+		CookieHeader:  cookieHdr,
+		ConfigPSIDTS:  c.initialConfigPSIDTS,
+		UpdatedAt:     updatedAt,
+	}
+
+	if cookieHdr != "" {
+		for _, part := range strings.Split(cookieHdr, ";") {
+			k, v, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if ok && strings.TrimSpace(k) == "__Secure-3PSIDTS" {
+				entry.Secure3PSIDTS = strings.TrimSpace(v)
+				break
+			}
+		}
+	}
+
+	if data, err := json.Marshal(entry); err == nil {
+		_ = os.WriteFile(jsonPath, data, 0600)
+	}
+
+	err := os.WriteFile(txtPath, []byte(psidts), 0600)
 	if err == nil {
-		c.log.Debug("Saved __Secure-1PSIDTS to local cache for future use", zap.String("file", filename))
+		c.log.Debug("Saved session cookies to local cache for future use", zap.String("file", jsonPath))
 	} else {
-		c.log.Warn("Failed to save cookies to cache", zap.String("file", filename), zap.Error(err))
+		c.log.Warn("Failed to save cookies to cache", zap.String("file", txtPath), zap.Error(err))
 	}
 	return err
 }
 
-// ClearCookieCache deletes the cached cookie file for the current PSID
+// ClearCookieCache deletes the cached cookie files for the current PSID
 func (c *Client) ClearCookieCache() error {
-	if c.cookies.Secure1PSID == "" {
+	c.cookies.mu.RLock()
+	psid := c.cookies.Secure1PSID
+	c.cookies.mu.RUnlock()
+	if psid == "" {
 		return nil
 	}
 
-	hash := sha256.Sum256([]byte(c.cookies.Secure1PSID))
-	filename := filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
-
-	err := os.Remove(filename)
+	hash := sha256.Sum256([]byte(psid))
+	hashHex := hex.EncodeToString(hash[:])
+	_ = os.Remove(filepath.Join(".cookies", hashHex+".json"))
+	err := os.Remove(filepath.Join(".cookies", hashHex+".txt"))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-
 	return nil
 }
 

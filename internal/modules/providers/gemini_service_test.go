@@ -3,9 +3,11 @@ package providers
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/imroc/req/v3"
 	"go.uber.org/zap"
 )
 
@@ -135,3 +137,37 @@ func TestParseResponseHandlesBardErrorInfo(t *testing.T) {
 		t.Fatalf("Expected error to contain %q, got: %v", expectedSubstr, err)
 	}
 }
+
+func TestUpdateCookiesSynchronizesHeadersAndStore(t *testing.T) {
+	client := &Client{
+		cookies: &CookieStore{
+			Secure1PSID:   "test_psid",
+			Secure1PSIDTS: "old_ts",
+		},
+		cookieHeader:           "__Secure-1PSID=test_psid; __Secure-1PSIDTS=old_ts",
+		configuredCookieHeader: "__Secure-1PSID=test_psid; __Secure-1PSIDTS=old_ts",
+		httpClient:             req.NewClient(),
+		log:                    zap.NewNop(),
+	}
+
+	client.updateCookies([]*http.Cookie{
+		{Name: "__Secure-1PSIDTS", Value: "new_ts"},
+		{Name: "__Secure-3PSIDTS", Value: "new_3ts"},
+		{Name: "SIDCC", Value: "new_sidcc"},
+	})
+
+	if client.cookies.Secure1PSIDTS != "new_ts" {
+		t.Fatalf("expected Secure1PSIDTS to be 'new_ts', got %q", client.cookies.Secure1PSIDTS)
+	}
+	if !strings.Contains(client.cookieHeader, "__Secure-1PSIDTS=new_ts") {
+		t.Fatalf("cookieHeader missing updated 1PSIDTS: %q", client.cookieHeader)
+	}
+	if !strings.Contains(client.cookieHeader, "__Secure-3PSIDTS=new_3ts") {
+		t.Fatalf("cookieHeader missing updated 3PSIDTS: %q", client.cookieHeader)
+	}
+	if !strings.Contains(client.cookieHeader, "SIDCC=new_sidcc") {
+		t.Fatalf("cookieHeader missing updated SIDCC: %q", client.cookieHeader)
+	}
+	_ = client.ClearCookieCache()
+}
+
