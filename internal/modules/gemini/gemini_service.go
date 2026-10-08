@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -77,6 +78,16 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 				FileData: &dto.FileData{
 					MimeType: image.MimeType,
 					FileURI:  image.URL,
+				},
+			})
+		}
+		// Canvas files ("-canvas" models) are returned as inline file parts.
+		for _, canvas := range providers.CanvasFiles(response.Canvases) {
+			resParts = append(resParts, dto.Part{
+				InlineData: &dto.InlineData{
+					MimeType:    canvas.MimeType,
+					Data:        base64.StdEncoding.EncodeToString([]byte(canvas.Content)),
+					DisplayName: canvas.FileName,
 				},
 			})
 		}
@@ -239,10 +250,18 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 		}
 	}
 
-	// Final STOP chunk
-	onEvent(dto.GeminiGenerateResponse{
-		Candidates: []dto.Candidate{{Index: 0, FinishReason: "STOP"}},
-	})
+	// Final STOP chunk carries the file parts (canvases, images) whole.
+	var fileParts []dto.Part
+	for _, part := range candidate.Content.Parts {
+		if part.InlineData != nil || part.FileData != nil {
+			fileParts = append(fileParts, part)
+		}
+	}
+	final := dto.Candidate{Index: 0, FinishReason: "STOP"}
+	if len(fileParts) > 0 {
+		final.Content = dto.Content{Role: "model", Parts: fileParts}
+	}
+	onEvent(dto.GeminiGenerateResponse{Candidates: []dto.Candidate{final}})
 
 	return nil
 }

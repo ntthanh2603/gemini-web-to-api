@@ -171,6 +171,18 @@ func extensionFromMimeType(mimeType string) string {
 	}
 }
 
+// CanvasFile is a code file or document Gemini wrote with its Canvas tool.
+// Content is the raw file content (code is not wrapped in a Markdown fence).
+type CanvasFile struct {
+	ID       string `json:"id"`
+	Title    string `json:"title,omitempty"`
+	FileName string `json:"file_name"`
+	Type     string `json:"type"` // "code" or "document"
+	Language string `json:"language,omitempty"`
+	MimeType string `json:"mime_type"`
+	Content  string `json:"content"`
+}
+
 // ModelListResponse represents the list of models
 type ModelListResponse struct {
 	Object string      `json:"object,omitempty"`

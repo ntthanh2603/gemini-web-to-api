@@ -124,6 +124,7 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	}
 
 	message.ReasoningContent = response.ReasoningText
+	message.Canvases = providers.CanvasFiles(response.Canvases)
 
 	// Logic: Construct Response
 	return &dto.ChatCompletionResponse{
@@ -419,13 +420,13 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 		}
 	}
 
-	// Final text chunk
+	// Final text chunk; canvases are sent whole, once.
 	onEvent(dto.ChatCompletionChunk{
 		ID:      chunkID,
 		Object:  "chat.completion.chunk",
 		Created: created,
 		Model:   response.Model,
-		Choices: []dto.ChunkChoice{{Index: 0, FinishReason: choice.FinishReason}},
+		Choices: []dto.ChunkChoice{{Index: 0, Delta: dto.ChatCompletionChunkDelta{Canvases: choice.Message.Canvases}, FinishReason: choice.FinishReason}},
 	})
 
 	return nil

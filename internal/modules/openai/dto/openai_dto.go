@@ -282,6 +282,8 @@ type ChatCompletionResponseMessage struct {
 	Content          string                   `json:"content,omitempty"`
 	ReasoningContent string                   `json:"reasoning_content,omitempty"`
 	ToolCalls        []ChatCompletionToolCall `json:"tool_calls,omitempty"`
+	// Canvases lists files written by Gemini's Canvas tool ("-canvas" models).
+	Canvases []models.CanvasFile `json:"canvases,omitempty"`
 }
 
 // ChatCompletionResponse represents OpenAI chat completion response
@@ -322,6 +324,7 @@ type ChatCompletionChunkDelta struct {
 	Content          string                             `json:"content,omitempty"`
 	ReasoningContent string                             `json:"reasoning_content,omitempty"`
 	ToolCalls        []ChatCompletionChunkDeltaToolCall `json:"tool_calls,omitempty"`
+	Canvases         []models.CanvasFile                `json:"canvases,omitempty"`
 }
 
 // ChatCompletionChunk represents a streaming chunk

@@ -97,7 +97,7 @@ func TestApplyVideoInnerMatchesWebClient(t *testing.T) {
 		encoded, _ := json.Marshal(inner)
 		var decoded []interface{}
 		_ = json.Unmarshal(encoded, &decoded)
-		if len(decoded) != geminiVideoInnerLength {
+		if len(decoded) != geminiWebClientInnerLength {
 			t.Fatalf("length = %d", len(decoded))
 		}
 		message := decoded[0].([]interface{})
@@ -133,7 +133,7 @@ func TestGenerateVideoSubmitsOncePollsAndDownloads(t *testing.T) {
 			_ = json.Unmarshal([]byte(r.PostForm.Get("f.req")), &outer)
 			var inner []interface{}
 			_ = json.Unmarshal([]byte(outer[1].(string)), &inner)
-			if len(inner) != geminiVideoInnerLength || inner[49] != float64(11) {
+			if len(inner) != geminiWebClientInnerLength || inner[49] != float64(11) {
 				t.Fatalf("not a video request: len=%d [49]=%v", len(inner), inner[49])
 			}
 			var header []interface{}
