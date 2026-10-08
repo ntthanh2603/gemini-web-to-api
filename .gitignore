@@ -57,3 +57,4 @@ tmp/
 # generated example outputs
 examples/generated_video*.mp4
 examples/generated_canvas_*
+examples/generated_music_*

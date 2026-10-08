@@ -486,6 +486,7 @@ func (c *Client) GenerateContent(ctx context.Context, prompt string, options ...
 // canonical model metadata currently advertised by Gemini Web.
 func (c *Client) ResolveModel(requested string) (ModelInfo, error) {
 	base, canvas := splitCanvasModel(requested)
+	base, music := splitMusicModel(base)
 	c.mu.RLock()
 	model, err := resolveGeminiModel(base, c.cachedModels)
 	c.mu.RUnlock()
@@ -499,6 +500,12 @@ func (c *Client) ResolveModel(requested string) (ModelInfo, error) {
 			info.DisplayName += " (Canvas)"
 		}
 	}
+	if music {
+		info.ID += MusicModelSuffix
+		if info.DisplayName != "" {
+			info.DisplayName += " (Music)"
+		}
+	}
 	return info, nil
 }
 
@@ -510,6 +517,12 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	if model, canvas := splitCanvasModel(config.Model); canvas {
 		config.Model = model
 		config.Canvas = true
+	}
+	if model, music := splitMusicModel(config.Model); music {
+		config.Model = model
+		if config.Music == nil {
+			config.Music = &MusicConfig{}
+		}
 	}
 
 	c.mu.Lock()
@@ -555,10 +568,12 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	}
 	if config.Video != nil {
 		inner = applyVideoInner(inner, config.Video.AspectRatio)
+	} else if config.Music != nil {
+		inner = applyMusicInner(inner, *config.Music)
 	} else if config.Canvas {
 		inner = applyCanvasInner(inner)
 	}
-	if config.Video != nil || config.Canvas {
+	if config.Video != nil || config.Music != nil || config.Canvas {
 		if err := applyWebToolModelHeader(modelHeaders); err != nil {
 			return nil, err
 		}
@@ -588,8 +603,8 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	generateURL := geminiAccountURL(EndpointGenerate, c.authUser) + "?" + queryValues.Encode()
 
 	maxAttempts := c.maxRetries
-	// A retried video request could start (and bill) a second generation.
-	if maxAttempts <= 0 || config.Video != nil {
+	// A retried video/music request could start (and bill) a second generation.
+	if maxAttempts <= 0 || config.Video != nil || config.Music != nil {
 		maxAttempts = 1
 	}
 
@@ -967,6 +982,8 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 	var videos []Video
 	seenVideos := make(map[string]bool)
 	var canvases []Canvas
+	var audios []Audio
+	seenAudio := make(map[string]bool)
 	conversationID := ""
 
 	lines := strings.Split(text, "\n")
@@ -1018,6 +1035,12 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 							for _, image := range extractGeneratedImages(candidate) {
 								imagesByURL[image.URL] = image
 							}
+							for _, audio := range extractGeneratedAudio(candidate) {
+								if !seenAudio[audio.URL] {
+									seenAudio[audio.URL] = true
+									audios = append(audios, audio)
+								}
+							}
 							for _, video := range extractGeneratedVideos(candidate) {
 								if !seenVideos[video.URL] {
 									seenVideos[video.URL] = true
@@ -1064,7 +1087,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		}
 	}
 
-	if found || len(imagesByURL) > 0 || len(videos) > 0 {
+	if found || len(imagesByURL) > 0 || len(videos) > 0 || len(audios) > 0 {
 		images := make([]Image, 0, len(imagesByURL))
 		for _, image := range imagesByURL {
 			images = append(images, image)
@@ -1077,6 +1100,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 			Images:         images,
 			Videos:         videos,
 			Canvases:       canvases,
+			Audios:         audios,
 			Metadata:       finalMetadata,
 			ConversationID: conversationID,
 		}, nil

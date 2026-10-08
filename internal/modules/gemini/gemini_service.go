@@ -40,6 +40,9 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 	if err != nil {
 		return nil, err
 	}
+	if providers.IsMusicModel(modelID) {
+		return s.generateMusic(ctx, modelID, prompt)
+	}
 
 	// Logic: Call Provider
 	opts := []providers.GenerateOption{providers.WithModel(modelID)}
@@ -347,6 +350,36 @@ func (s *GeminiService) IsHealthy() bool {
 
 func (s *GeminiService) Client() *providers.Client {
 	return s.client
+}
+
+// generateMusic serves "-music" models: the reply text plus the generated
+// track as an inline audio part, like Gemini API audio-output models.
+func (s *GeminiService) generateMusic(ctx context.Context, modelID, prompt string) (*dto.GeminiGenerateResponse, error) {
+	result, err := s.client.GenerateMusic(ctx, prompt, modelID, providers.MusicConfig{})
+	if err != nil {
+		return nil, err
+	}
+	mimeType := result.Audio.MimeType
+	if mimeType == "" {
+		mimeType = "audio/mpeg"
+	}
+	var parts []dto.Part
+	if text := strings.TrimSpace(result.Text); text != "" {
+		parts = append(parts, dto.Part{Text: text})
+	}
+	parts = append(parts, dto.Part{InlineData: &dto.InlineData{
+		MimeType:    mimeType,
+		Data:        base64.StdEncoding.EncodeToString(result.Data),
+		DisplayName: result.Audio.FileName,
+	}})
+	return &dto.GeminiGenerateResponse{
+		Candidates: []dto.Candidate{{
+			Index:        0,
+			Content:      dto.Content{Role: "model", Parts: parts},
+			FinishReason: "STOP",
+		}},
+		UsageMetadata: &dto.UsageMetadata{TotalTokenCount: 0},
+	}, nil
 }
 
 // StartVideoOperation starts a video job for models/{model}:predictLongRunning.
