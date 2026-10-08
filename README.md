@@ -145,11 +145,13 @@ cd gemini-web-to-api
 
 Pick whichever method suits your setup:
 
-| Method             | Command                        | Requirements                       |
-| ------------------ | ------------------------------ | ---------------------------------- |
-| 🐳 Docker Compose  | `docker compose up -d --build` | Docker                             |
-| 🐹 Go direct       | `go run cmd/server/main.go`    | [Go 1.21+](https://golang.org/dl/) |
-| ⚡ Task (dev mode) | `task dev`                     | [Task](https://taskfile.dev)       |
+| Method             | Command                        | Requirements                                                                                |
+| ------------------ | ------------------------------ | ------------------------------------------------------------------------------------------- |
+| 🐳 Docker Compose  | `docker compose up -d --build` | Docker                                                                                      |
+| 🐹 Go direct       | `go run cmd/server/main.go`    | [Go 1.21+](https://golang.org/dl/)                                                          |
+| ⚡ Task (dev mode) | `task dev`                     | [Task](https://taskfile.dev) + [Air](https://github.com/air-verse/air) (`task install-air`) |
+
+> `task dev` runs the server with **hot reload**: Air rebuilds and restarts it whenever a `.go`, `.json` or `.env` file changes (config in `.air.toml`).
 
 **Done!** Jump to [Test it](#-test-it). 🎉
 
@@ -177,8 +179,10 @@ Your Gemini Web To API is running at `http://localhost:4981` 🎉
 - 📝 **Well Documented**: Interactive API docs at `/docs`
 - 🖼️ **Image Generation**: OpenAI-compatible text-to-image with authenticated `b64_json` output
 - 🧩 **Image Inputs**: Remote URLs, `data:` URLs and multiple reference images in chat requests
+- 🎬 **Video Generation**: Text-to-video (16:9 or 9:16 MP4) via Gemini Web's Videos tool, usable from the OpenAI (`client.videos`) and Google GenAI (`generate_videos`) SDKs
 
 See [Image generation and image inputs](docs/image-generation.md) for tested examples, limitations and security guidance.
+See [Video generation](docs/video-generation.md) for the video APIs and the [OpenAI](examples/openai_video_client.py) / [Gemini](examples/gemini_video_client.py) SDK examples.
 
 ---
 
@@ -186,17 +190,17 @@ See [Image generation and image inputs](docs/image-generation.md) for tested exa
 
 ### Environment Variables
 
-| Variable                  | Required | Default | Description                                        |
-| ------------------------- | -------- | ------- | -------------------------------------------------- |
-| `GEMINI_COOKIES`          | ✅ Yes   | —       | Complete Cookie request header copied from the Gemini Web tab |
+| Variable                  | Required | Default | Description                                                      |
+| ------------------------- | -------- | ------- | ---------------------------------------------------------------- |
+| `GEMINI_COOKIES`          | ✅ Yes   | —       | Complete Cookie request header copied from the Gemini Web tab    |
 | `GEMINI_AUTH_USER`        | ❌ No    | —       | Google account slot from the Gemini URL, e.g. `2` for `/u/2/app` |
-| `GEMINI_REFRESH_INTERVAL` | ❌ No    | `30`    | Cookie rotation interval (minutes)                 |
-| `GEMINI_MAX_RETRIES`      | ❌ No    | `3`     | Max retry attempts when an API call fails          |
-| `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests   |
-| `PORT`                    | ❌ No    | `4981`  | Server port                                        |
-| `RATE_LIMIT_ENABLED`      | ❌ No    | `false` | Enable or disable rate limiting                    |
-| `RATE_LIMIT_WINDOW_MS`    | ❌ No    | `60000` | Rate limit time window in milliseconds             |
-| `RATE_LIMIT_MAX_REQUESTS` | ❌ No    | `10`    | Maximum number of requests allowed per time window |
+| `GEMINI_REFRESH_INTERVAL` | ❌ No    | `30`    | Cookie rotation interval (minutes)                               |
+| `GEMINI_MAX_RETRIES`      | ❌ No    | `3`     | Max retry attempts when an API call fails                        |
+| `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests                 |
+| `PORT`                    | ❌ No    | `4981`  | Server port                                                      |
+| `RATE_LIMIT_ENABLED`      | ❌ No    | `false` | Enable or disable rate limiting                                  |
+| `RATE_LIMIT_WINDOW_MS`    | ❌ No    | `60000` | Rate limit time window in milliseconds                           |
+| `RATE_LIMIT_MAX_REQUESTS` | ❌ No    | `10`    | Maximum number of requests allowed per time window               |
 
 ### Configuration Priority
 

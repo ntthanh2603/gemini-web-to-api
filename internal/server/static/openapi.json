@@ -388,6 +388,328 @@
                     }
                 }
             }
+        },
+        "/openai/v1/videos": {
+            "post": {
+                "description": "Starts an asynchronous text-to-video job using Gemini Web's Videos tool (OpenAI Videos API). Accepts JSON or multipart/form-data.",
+                "consumes": [
+                    "application/json",
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Create video",
+                "parameters": [
+                    {
+                        "description": "Video Generation Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.VideoGenerationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.Video"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "429": {
+                        "description": "Another video job is running",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "List videos",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.VideoList"
+                        }
+                    }
+                }
+            }
+        },
+        "/openai/v1/videos/{video_id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Retrieve video",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "video_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.Video"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Delete video",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "video_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.VideoDeleted"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Video is still generating",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/openai/v1/videos/{video_id}/content": {
+            "get": {
+                "produces": [
+                    "video/mp4"
+                ],
+                "tags": [
+                    "OpenAI"
+                ],
+                "summary": "Download video content",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Video ID",
+                        "name": "video_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "MP4 video",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Video is not ready",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/gemini/v1beta/models/{model}:predictLongRunning": {
+            "post": {
+                "description": "Starts an asynchronous text-to-video job using Gemini Web's Videos tool (google-genai generate_videos). veo-* model names use the account default.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Gemini"
+                ],
+                "summary": "Generate videos",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model ID",
+                        "name": "model",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Video request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_gemini_dto.PredictLongRunningRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_gemini_dto.VideoOperation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "429": {
+                        "description": "Another video job is running",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/gemini/v1beta/models/{model}/operations/{operation}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Gemini"
+                ],
+                "summary": "Get video operation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Model ID",
+                        "name": "model",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Operation ID",
+                        "name": "operation",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/gemini-web-to-api_internal_modules_gemini_dto.VideoOperation"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/gemini/v1beta/files/{file}:download": {
+            "get": {
+                "produces": [
+                    "video/mp4"
+                ],
+                "tags": [
+                    "Gemini"
+                ],
+                "summary": "Download generated video",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "File ID",
+                        "name": "file",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "MP4 video",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Video is not ready",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1108,6 +1430,241 @@
                     "type": "array",
                     "items": {
                         "type": "integer"
+                    }
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_openai_dto.VideoGenerationRequest": {
+            "type": "object",
+            "required": [
+                "prompt"
+            ],
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "example": "A cat walking on a beach at sunset"
+                },
+                "model": {
+                    "type": "string",
+                    "example": "gemini-pro"
+                },
+                "size": {
+                    "type": "string",
+                    "enum": [
+                        "1280x720",
+                        "720x1280"
+                    ]
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": [
+                        "16:9",
+                        "9:16"
+                    ]
+                },
+                "seconds": {
+                    "type": "string",
+                    "description": "Accepted for SDK compatibility; Gemini decides the length."
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_openai_dto.VideoJobError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "enum": [
+                        "quota_exceeded",
+                        "refused",
+                        "timeout",
+                        "download_failed",
+                        "no_video",
+                        "upstream_error"
+                    ]
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_openai_dto.Video": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "video_f222c6b42d7840198109cb0420e66864"
+                },
+                "object": {
+                    "type": "string",
+                    "example": "video"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "in_progress",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "progress": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "integer"
+                },
+                "completed_at": {
+                    "type": "integer"
+                },
+                "expires_at": {
+                    "type": "integer"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "seconds": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "string"
+                },
+                "error": {
+                    "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.VideoJobError"
+                },
+                "conversation_id": {
+                    "type": "string"
+                },
+                "content_url": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_openai_dto.VideoList": {
+            "type": "object",
+            "properties": {
+                "object": {
+                    "type": "string",
+                    "example": "list"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/gemini-web-to-api_internal_modules_openai_dto.Video"
+                    }
+                },
+                "first_id": {
+                    "type": "string"
+                },
+                "last_id": {
+                    "type": "string"
+                },
+                "has_more": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_openai_dto.VideoDeleted": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "object": {
+                    "type": "string",
+                    "example": "video.deleted"
+                },
+                "deleted": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_gemini_dto.PredictLongRunningRequest": {
+            "type": "object",
+            "properties": {
+                "instances": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "aspectRatio": {
+                            "type": "string",
+                            "enum": [
+                                "16:9",
+                                "9:16"
+                            ]
+                        },
+                        "sampleCount": {
+                            "type": "integer"
+                        }
+                    }
+                }
+            }
+        },
+        "gemini-web-to-api_internal_modules_gemini_dto.VideoOperation": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "example": "models/veo-3.0-generate-001/operations/f222c6b42d7840198109cb0420e66864"
+                },
+                "done": {
+                    "type": "boolean"
+                },
+                "response": {
+                    "type": "object",
+                    "properties": {
+                        "generateVideoResponse": {
+                            "type": "object",
+                            "properties": {
+                                "generatedSamples": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "video": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "uri": {
+                                                        "type": "string"
+                                                    },
+                                                    "encoding": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "error": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "integer"
+                        },
+                        "message": {
+                            "type": "string"
+                        },
+                        "status": {
+                            "type": "string"
+                        }
                     }
                 }
             }

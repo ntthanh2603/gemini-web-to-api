@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -218,6 +220,102 @@ func buildImageGenerationPrompt(prompt, size string) string {
 		b.WriteString(strings.TrimSpace(size))
 	}
 	return b.String()
+}
+
+// openAIVideoIDPrefix matches OpenAI video IDs; the job store uses bare IDs.
+const openAIVideoIDPrefix = "video_"
+
+// expectedVideoSeconds is how long Gemini Web usually takes, for progress.
+const expectedVideoSeconds = 90
+
+// CreateVideo starts a background video job (OpenAI Videos API).
+func (s *OpenAIService) CreateVideo(req dto.VideoGenerationRequest) (*dto.Video, error) {
+	aspect, err := providers.ParseVideoAspect(req.Size, req.AspectRatio)
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.client.StartVideoJob(req.Prompt, req.Model, aspect)
+	if err != nil {
+		return nil, err
+	}
+	return toOpenAIVideo(job, time.Now()), nil
+}
+
+// GetVideo returns a video job by OpenAI ID.
+func (s *OpenAIService) GetVideo(id string) (*dto.Video, error) {
+	job, err := s.client.GetVideoJob(strings.TrimPrefix(id, openAIVideoIDPrefix))
+	if err != nil {
+		return nil, err
+	}
+	return toOpenAIVideo(job, time.Now()), nil
+}
+
+// ListVideos returns retained video jobs, newest first.
+func (s *OpenAIService) ListVideos() *dto.VideoList {
+	now := time.Now()
+	list := &dto.VideoList{Object: "list", Data: []dto.Video{}}
+	for _, job := range s.client.ListVideoJobs() {
+		list.Data = append(list.Data, *toOpenAIVideo(job, now))
+	}
+	if n := len(list.Data); n > 0 {
+		list.FirstID, list.LastID = &list.Data[0].ID, &list.Data[n-1].ID
+	}
+	return list
+}
+
+// DeleteVideo discards a finished video job.
+func (s *OpenAIService) DeleteVideo(id string) (*dto.VideoDeleted, error) {
+	if err := s.client.DeleteVideoJob(strings.TrimPrefix(id, openAIVideoIDPrefix)); err != nil {
+		return nil, err
+	}
+	return &dto.VideoDeleted{ID: id, Object: "video.deleted", Deleted: true}, nil
+}
+
+// VideoContent returns the MP4 bytes of a completed video job.
+func (s *OpenAIService) VideoContent(id string) ([]byte, string, error) {
+	job, data, err := s.client.VideoJobContent(strings.TrimPrefix(id, openAIVideoIDPrefix))
+	if err != nil {
+		return nil, "", err
+	}
+	mimeType := job.Video.MimeType
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+	return data, mimeType, nil
+}
+
+func toOpenAIVideo(job providers.VideoJob, now time.Time) *dto.Video {
+	id := openAIVideoIDPrefix + job.ID
+	video := &dto.Video{
+		ID:             id,
+		Object:         "video",
+		Model:          job.Model,
+		Status:         job.Status,
+		CreatedAt:      job.CreatedAt.Unix(),
+		Prompt:         job.Prompt,
+		Seconds:        "8",
+		Size:           job.Size(),
+		ConversationID: job.ConversationID,
+		Message:        job.Message,
+	}
+	if job.Video.Duration > 0 {
+		video.Seconds = strconv.Itoa(int(math.Round(job.Video.Duration)))
+	}
+	switch job.Status {
+	case providers.VideoJobInProgress:
+		video.Progress = min(95, int(now.Sub(job.CreatedAt).Seconds()*100/expectedVideoSeconds))
+	case providers.VideoJobCompleted:
+		video.Progress = 100
+		video.ContentURL = "/openai/v1/videos/" + id + "/content"
+	}
+	if !job.CompletedAt.IsZero() {
+		completed, expires := job.CompletedAt.Unix(), job.ExpiresAt().Unix()
+		video.CompletedAt, video.ExpiresAt = &completed, &expires
+	}
+	if job.Error != nil {
+		video.Error = &dto.VideoJobError{Code: job.Error.Code, Message: job.Error.Message}
+	}
+	return video
 }
 
 // CreateChatCompletionStream handles OpenAI streaming logic within the service layer.

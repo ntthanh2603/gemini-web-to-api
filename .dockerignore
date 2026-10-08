@@ -7,3 +7,4 @@ README.md
 vendor/
 bin/
 *.log
+tmp/
