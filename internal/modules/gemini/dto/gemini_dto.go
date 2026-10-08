@@ -132,8 +132,9 @@ type FunctionCallingConfig struct {
 
 // InlineData represents inline data (e.g., images)
 type InlineData struct {
-	MimeType string `json:"mimeType"`
-	Data     string `json:"data"`
+	MimeType    string `json:"mimeType"`
+	Data        string `json:"data"`
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // FileData represents file data referenced by URI.
@@ -147,6 +148,8 @@ func (d *InlineData) UnmarshalJSON(data []byte) error {
 		MimeTypeCamel string `json:"mimeType"`
 		MimeTypeSnake string `json:"mime_type"`
 		Data          string `json:"data"`
+		DisplayCamel  string `json:"displayName"`
+		DisplaySnake  string `json:"display_name"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -156,6 +159,10 @@ func (d *InlineData) UnmarshalJSON(data []byte) error {
 		d.MimeType = raw.MimeTypeSnake
 	}
 	d.Data = raw.Data
+	d.DisplayName = raw.DisplayCamel
+	if d.DisplayName == "" {
+		d.DisplayName = raw.DisplaySnake
+	}
 	return nil
 }
 

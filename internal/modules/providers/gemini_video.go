@@ -35,8 +35,6 @@ const (
 	geminiReadConversationRPC = "hNvQHb"
 	// geminiVideoToolMode is inner[49] when the "Videos" tool is selected.
 	geminiVideoToolMode = 11
-	// geminiVideoInnerLength matches the payload length sent by the web client.
-	geminiVideoInnerLength = 99
 	// geminiVideoCardField is the one-based JSPB field of candidate[12] that
 	// holds the generated-video card.
 	geminiVideoCardField = 60
@@ -111,11 +109,7 @@ var (
 // applyVideoInner turns a normal StreamGenerate payload into the payload the
 // web client sends from the /videos page.
 func applyVideoInner(inner []interface{}, aspect VideoAspectRatio) []interface{} {
-	if len(inner) < geminiVideoInnerLength {
-		extended := make([]interface{}, geminiVideoInnerLength)
-		copy(extended, inner)
-		inner = extended
-	}
+	inner = applyWebClientInner(inner)
 	message, _ := inner[0].([]interface{})
 	if len(message) < 10 {
 		extended := make([]interface{}, 10)
@@ -135,19 +129,15 @@ func applyVideoInner(inner []interface{}, aspect VideoAspectRatio) []interface{}
 	if aspect == VideoAspectPortrait {
 		toolID = 17
 	}
-	inner[30] = []interface{}{4, 16}
 	inner[45] = nil // completion is read back from the saved conversation
 	inner[49] = geminiVideoToolMode
 	inner[55] = []interface{}{[]interface{}{toolID}}
-	inner[68] = 2
-	inner[91] = 0
-	inner[96] = 0
-	inner[98] = 1
 	return inner
 }
 
-// applyVideoModelHeader advertises the video feature in the model header.
-func applyVideoModelHeader(headers map[string]string) error {
+// applyWebToolModelHeader advertises web-client tool features (video, canvas)
+// in the model header, as gemini.google.com does.
+func applyWebToolModelHeader(headers map[string]string) error {
 	var header []interface{}
 	if err := json.Unmarshal([]byte(headers[geminiModelHeaderKey]), &header); err != nil || len(header) < 9 {
 		return fmt.Errorf("invalid Gemini model header")

@@ -38,6 +38,8 @@ type MessageResponse struct {
 	Content    []ConfigContent `json:"content"`
 	StopReason string          `json:"stop_reason"`
 	Usage      models.Usage    `json:"usage"`
+	// Canvases lists files written by Gemini's Canvas tool ("-canvas" models).
+	Canvases []models.CanvasFile `json:"canvases,omitempty"`
 }
 
 // ConfigContent represents the content block in a response

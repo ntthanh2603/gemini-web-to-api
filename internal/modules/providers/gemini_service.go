@@ -485,19 +485,31 @@ func (c *Client) GenerateContent(ctx context.Context, prompt string, options ...
 // ResolveModel validates a requested public model name and returns the
 // canonical model metadata currently advertised by Gemini Web.
 func (c *Client) ResolveModel(requested string) (ModelInfo, error) {
+	base, canvas := splitCanvasModel(requested)
 	c.mu.RLock()
-	model, err := resolveGeminiModel(requested, c.cachedModels)
+	model, err := resolveGeminiModel(base, c.cachedModels)
 	c.mu.RUnlock()
 	if err != nil {
 		return ModelInfo{}, err
 	}
-	return model.ModelInfo, nil
+	info := model.ModelInfo
+	if canvas {
+		info.ID += CanvasModelSuffix
+		if info.DisplayName != "" {
+			info.DisplayName += " (Canvas)"
+		}
+	}
+	return info, nil
 }
 
 func (c *Client) generateContent(ctx context.Context, prompt string, metadata []interface{}, options ...GenerateOption) (*Response, error) {
 	config := &GenerateConfig{}
 	for _, opt := range options {
 		opt(config)
+	}
+	if model, canvas := splitCanvasModel(config.Model); canvas {
+		config.Model = model
+		config.Canvas = true
 	}
 
 	c.mu.Lock()
@@ -543,7 +555,11 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	}
 	if config.Video != nil {
 		inner = applyVideoInner(inner, config.Video.AspectRatio)
-		if err := applyVideoModelHeader(modelHeaders); err != nil {
+	} else if config.Canvas {
+		inner = applyCanvasInner(inner)
+	}
+	if config.Video != nil || config.Canvas {
+		if err := applyWebToolModelHeader(modelHeaders); err != nil {
 			return nil, err
 		}
 	}
@@ -680,6 +696,10 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 				zap.String("requested_model", selectedModel.ID),
 				zap.String("actual_model", actual.ID),
 			)
+		}
+		if config.Canvas {
+			result.Model += CanvasModelSuffix
+			result.RequestedModel += CanvasModelSuffix
 		}
 		c.log.Debug("GenerateContent timing",
 			zap.Duration("gemini_server_rtt", httpDuration),
@@ -946,6 +966,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 	imagesByURL := make(map[string]Image)
 	var videos []Video
 	seenVideos := make(map[string]bool)
+	var canvases []Canvas
 	conversationID := ""
 
 	lines := strings.Split(text, "\n")
@@ -1005,6 +1026,10 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 							}
 						}
 						firstCandidate, ok := candidates[0].([]interface{})
+						// Canvas content is streamed in some frames only; keep the latest.
+						if found := extractCanvases(firstCandidate); len(found) > 0 {
+							canvases = found
+						}
 						if ok && len(firstCandidate) >= 2 {
 							contentParts, ok := firstCandidate[1].([]interface{})
 							if ok && len(contentParts) > 0 {
@@ -1044,12 +1069,14 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		for _, image := range imagesByURL {
 			images = append(images, image)
 		}
+		finalResText = renderCanvasPlaceholders(finalResText, canvases)
 		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
 		return &Response{
 			Text:           cleanText,
 			ReasoningText:  reasoning,
 			Images:         images,
 			Videos:         videos,
+			Canvases:       canvases,
 			Metadata:       finalMetadata,
 			ConversationID: conversationID,
 		}, nil

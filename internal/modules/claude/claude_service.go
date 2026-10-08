@@ -113,6 +113,7 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 			InputTokens:  len(prompt) / 4,
 			OutputTokens: len(response.Text) / 4,
 		},
+		Canvases: providers.CanvasFiles(response.Canvases),
 	}, nil
 }
 
@@ -127,11 +128,12 @@ func (s *ClaudeService) GenerateMessageStream(ctx context.Context, req dto.Messa
 	if !onEvent(dto.StreamEvent{
 		Type: "message_start",
 		Message: &dto.MessageResponse{
-			ID:    response.ID,
-			Type:  "message",
-			Role:  "assistant",
-			Model: response.Model,
-			Usage: response.Usage,
+			ID:       response.ID,
+			Type:     "message",
+			Role:     "assistant",
+			Model:    response.Model,
+			Usage:    response.Usage,
+			Canvases: response.Canvases,
 		},
 	}) {
 		return nil
