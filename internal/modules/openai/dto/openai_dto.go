@@ -418,3 +418,34 @@ type VideoDeleted struct {
 	Object  string `json:"object"`
 	Deleted bool   `json:"deleted"`
 }
+
+// SpeechRequest is the OpenAI audio/speech body. Gemini Web has no
+// text-to-speech, so the bridge generates music from Input instead:
+// Voice "instrumental" or "vocals" selects the vocal mode (any other voice
+// leaves it to the prompt), Instructions are appended as style guidance,
+// and Length and Genre (bridge extensions, sent with extra_body) pick the
+// web client's options.
+type SpeechRequest struct {
+	Model          string          `json:"model"`
+	Input          string          `json:"input"`
+	Voice          json.RawMessage `json:"voice,omitempty"`
+	Instructions   string          `json:"instructions,omitempty"`
+	ResponseFormat string          `json:"response_format,omitempty"`
+	Speed          float64         `json:"speed,omitempty"`
+	StreamFormat   string          `json:"stream_format,omitempty"`
+	Length         string          `json:"length,omitempty"`
+	Genre          string          `json:"genre,omitempty"`
+}
+
+// VoiceName returns the voice as a string; custom voices are {"id": "..."}.
+func (r SpeechRequest) VoiceName() string {
+	var name string
+	if json.Unmarshal(r.Voice, &name) == nil {
+		return name
+	}
+	var custom struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(r.Voice, &custom)
+	return custom.ID
+}

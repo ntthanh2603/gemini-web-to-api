@@ -383,6 +383,19 @@ func (c *Client) waitForVideo(ctx context.Context, result *VideoResult, interval
 // readConversationVideos reads the latest turns of a conversation (hNvQHb) and
 // returns the generated videos and the newest reply text.
 func (c *Client) readConversationVideos(ctx context.Context, conversationID string) ([]Video, string, error) {
+	candidates, text, err := c.readConversationCandidates(ctx, conversationID)
+	if err != nil {
+		return nil, "", err
+	}
+	var videos []Video
+	for _, candidate := range candidates {
+		videos = append(videos, extractGeneratedVideos(candidate)...)
+	}
+	return videos, text, nil
+}
+
+// readConversationCandidates reads the newest reply's candidates (hNvQHb).
+func (c *Client) readConversationCandidates(ctx context.Context, conversationID string) ([][]interface{}, string, error) {
 	c.mu.RLock()
 	token, cookieHeader, buildLabel, sessionID, language, authUser, generationID := c.at, c.cookieHeader, c.buildLabel, c.sessionID, c.language, c.authUser, c.generationID
 	c.mu.RUnlock()
@@ -443,13 +456,23 @@ func (c *Client) readConversationVideos(ctx context.Context, conversationID stri
 	if len(body) > maxConversationReadBytes {
 		return nil, "", errors.New("conversation response is too large")
 	}
-	videos, text := parseConversationVideos(body)
-	return videos, text, nil
+	candidates, text := parseConversationCandidates(body)
+	return candidates, text, nil
 }
 
-// parseConversationVideos decodes a batchexecute hNvQHb response. Turns are
-// [[cid,rid], null, userMessage, [candidate…], …] with the newest turn first.
+// parseConversationVideos returns the videos and text of the newest reply.
 func parseConversationVideos(body []byte) ([]Video, string) {
+	candidates, text := parseConversationCandidates(body)
+	var videos []Video
+	for _, candidate := range candidates {
+		videos = append(videos, extractGeneratedVideos(candidate)...)
+	}
+	return videos, text
+}
+
+// parseConversationCandidates decodes a batchexecute hNvQHb response. Turns are
+// [[cid,rid], null, userMessage, [candidate…], …] with the newest turn first.
+func parseConversationCandidates(body []byte) ([][]interface{}, string) {
 	body = bytes.TrimPrefix(bytes.TrimSpace(body), []byte(")]}'"))
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	var records [][]interface{}
@@ -477,7 +500,7 @@ func parseConversationVideos(body []byte) ([]Video, string) {
 		collect(value)
 	}
 
-	var videos []Video
+	var found [][]interface{}
 	text := ""
 	for _, record := range records {
 		raw, _ := record[2].(string)
@@ -501,7 +524,7 @@ func parseConversationVideos(body []byte) ([]Video, string) {
 				if !ok {
 					continue
 				}
-				videos = append(videos, extractGeneratedVideos(candidate)...)
+				found = append(found, candidate)
 				if text == "" && len(candidate) > 1 {
 					if parts, ok := candidate[1].([]interface{}); ok && len(parts) > 0 {
 						text, _ = parts[0].(string)
@@ -509,10 +532,10 @@ func parseConversationVideos(body []byte) ([]Video, string) {
 				}
 			}
 			// Only the newest turn belongs to this generation.
-			return videos, text
+			return found, text
 		}
 	}
-	return videos, text
+	return found, text
 }
 
 func (c *Client) downloadGeneratedVideo(ctx context.Context, rawURL, cookieHeader string) ([]byte, error) {

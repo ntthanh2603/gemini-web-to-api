@@ -51,6 +51,7 @@ type Response struct {
 	Images         []Image        `json:"images,omitempty"`
 	Videos         []Video        `json:"videos,omitempty"`
 	Canvases       []Canvas       `json:"canvases,omitempty"`
+	Audios         []Audio        `json:"audios,omitempty"`
 	Candidates    []Candidate    `json:"candidates,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	ChosenIndex    int            `json:"chosen_index"`
@@ -105,6 +106,7 @@ type GenerateConfig struct {
 	DownloadGeneratedImages bool
 	Video                   *VideoConfig
 	Canvas                  bool
+	Music                   *MusicConfig
 }
 
 // InputFile is an in-memory file to upload with a generation request.

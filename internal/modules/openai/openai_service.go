@@ -319,6 +319,34 @@ func toOpenAIVideo(job providers.VideoJob, now time.Time) *dto.Video {
 	return video
 }
 
+// CreateSpeech generates music with Gemini Web for the audio/speech endpoint
+// and returns the audio bytes with their media type.
+func (s *OpenAIService) CreateSpeech(ctx context.Context, req dto.SpeechRequest) ([]byte, string, error) {
+	prompt := strings.TrimSpace(req.Input)
+	if instructions := strings.TrimSpace(req.Instructions); instructions != "" && prompt != "" {
+		prompt += "\n\nStyle: " + instructions
+	}
+	config := providers.MusicConfig{Length: req.Length, Genre: req.Genre}
+	switch strings.ToLower(req.VoiceName()) {
+	case providers.MusicInstrumental, providers.MusicVocalsOn:
+		config.Vocals = strings.ToLower(req.VoiceName())
+	}
+	// OpenAI speech model names (tts-1, gpt-4o-mini-tts, ...) use the default model.
+	model := req.Model
+	if lower := strings.ToLower(model); strings.HasPrefix(lower, "tts") || strings.Contains(lower, "-tts") {
+		model = ""
+	}
+	result, err := s.client.GenerateMusic(ctx, prompt, model, config)
+	if err != nil {
+		return nil, "", err
+	}
+	mimeType := result.Audio.MimeType
+	if mimeType == "" {
+		mimeType = "audio/mpeg"
+	}
+	return result.Data, mimeType, nil
+}
+
 // CreateChatCompletionStream handles OpenAI streaming logic within the service layer.
 func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.ChatCompletionRequest, onEvent func(dto.ChatCompletionChunk) bool) error {
 	response, err := s.CreateChatCompletion(ctx, req)

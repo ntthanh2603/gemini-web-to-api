@@ -298,12 +298,69 @@ func (h *OpenAIController) HandleVideoContent(c fiber.Ctx) error {
 	return c.Send(data)
 }
 
+// musicRequestError maps music generation errors to OpenAI-style HTTP errors.
+func musicRequestError(c fiber.Ctx, err error) error {
+	var validationErr *providers.MusicValidationError
+	var generationErr *providers.VideoError
+	switch {
+	case errors.As(err, &validationErr):
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
+	case errors.As(err, &generationErr):
+		status := fiber.StatusBadGateway
+		switch generationErr.Code {
+		case providers.VideoErrorQuota:
+			status = fiber.StatusTooManyRequests
+		case providers.VideoErrorRefused:
+			status = fiber.StatusUnprocessableEntity
+		case providers.VideoErrorTimeout:
+			status = fiber.StatusGatewayTimeout
+		}
+		message := generationErr.Message
+		if generationErr.ProviderMessage != "" {
+			message += " (Gemini: " + generationErr.ProviderMessage + ")"
+		}
+		return c.Status(status).JSON(fiber.Map{"error": fiber.Map{"message": message, "type": "api_error", "code": generationErr.Code}})
+	}
+	return openAIRequestError(c, err)
+}
+
+// HandleSpeech generates music for the OpenAI audio/speech endpoint
+// @Summary Create music (OpenAI audio/speech)
+// @Description Generates a music track with Gemini Web's music tool. input is the music prompt; voice "instrumental" or "vocals" selects the vocal mode; length and genre are optional extensions. Returns the audio file.
+// @Tags OpenAI
+// @Accept json
+// @Produce audio/mpeg
+// @Param request body dto.SpeechRequest true "Speech (music) request"
+// @Success 200 {file} binary
+// @Failure 400 {object} map[string]interface{}
+// @Failure 502 {object} map[string]interface{}
+// @Router /openai/v1/audio/speech [post]
+func (h *OpenAIController) HandleSpeech(c fiber.Ctx) error {
+	var req dto.SpeechRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("invalid request body: %w", err), "invalid_request_error"))
+	}
+	if req.StreamFormat == "sse" {
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(errors.New("stream_format sse is not supported; music is returned as one audio file"), "invalid_request_error"))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	data, mimeType, err := h.service.CreateSpeech(ctx, req)
+	if err != nil {
+		h.log.Warn("CreateSpeech (music) failed", zap.Error(err), zap.String("model", req.Model))
+		return musicRequestError(c, err)
+	}
+	c.Set(fiber.HeaderContentType, mimeType)
+	return c.Send(data)
+}
+
 // Register registers the OpenAI routes onto the provided group
 func (c *OpenAIController) Register(group fiber.Router) {
 	group.Get("/models", c.HandleModels)
 	group.Get("/models/:model", c.HandleModel)
 	group.Post("/chat/completions", c.HandleChatCompletions)
 	group.Post("/images/generations", c.HandleImageGenerations)
+	group.Post("/audio/speech", c.HandleSpeech)
 	group.Post("/videos", c.HandleCreateVideo)
 	group.Get("/videos", c.HandleListVideos)
 	group.Get("/videos/:id", c.HandleGetVideo)
