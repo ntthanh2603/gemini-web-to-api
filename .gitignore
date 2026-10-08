@@ -53,3 +53,6 @@ gemini-web-to-api.exe
 examples/__pycache__/
 # air hot reload
 tmp/
+
+# generated example outputs
+examples/generated_video*.mp4

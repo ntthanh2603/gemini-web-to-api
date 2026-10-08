@@ -194,3 +194,66 @@ type UsageMetadata struct {
 	CandidatesTokenCount int32 `json:"candidatesTokenCount"`
 	TotalTokenCount      int32 `json:"totalTokenCount"`
 }
+
+// PredictLongRunningRequest is the body of models/{model}:predictLongRunning,
+// which google-genai sends for client.models.generate_videos.
+type PredictLongRunningRequest struct {
+	Instances  []VideoInstance  `json:"instances"`
+	Parameters *VideoParameters `json:"parameters,omitempty"`
+}
+
+// VideoInstance is one video request; only the text prompt is supported.
+type VideoInstance struct {
+	Prompt string          `json:"prompt"`
+	Image  json.RawMessage `json:"image,omitempty"`
+	Video  json.RawMessage `json:"video,omitempty"`
+}
+
+// VideoParameters holds generation options. Only aspectRatio and sampleCount
+// are honored; Gemini Web decides duration and resolution.
+type VideoParameters struct {
+	AspectRatio      string `json:"aspectRatio,omitempty"`
+	SampleCount      int    `json:"sampleCount,omitempty"`
+	DurationSeconds  int    `json:"durationSeconds,omitempty"`
+	NegativePrompt   string `json:"negativePrompt,omitempty"`
+	PersonGeneration string `json:"personGeneration,omitempty"`
+	Resolution       string `json:"resolution,omitempty"`
+}
+
+// VideoOperation is a google.longrunning.Operation for a video job.
+type VideoOperation struct {
+	Name     string                  `json:"name"`
+	Done     bool                    `json:"done"`
+	Metadata map[string]any          `json:"metadata,omitempty"`
+	Response *VideoOperationResponse `json:"response,omitempty"`
+	Error    *OperationError         `json:"error,omitempty"`
+}
+
+// VideoOperationResponse wraps the generated videos of a finished operation.
+type VideoOperationResponse struct {
+	Type                  string                `json:"@type"`
+	GenerateVideoResponse GenerateVideoResponse `json:"generateVideoResponse"`
+}
+
+// GenerateVideoResponse lists the generated samples.
+type GenerateVideoResponse struct {
+	GeneratedSamples []GeneratedSample `json:"generatedSamples"`
+}
+
+// GeneratedSample is one generated video.
+type GeneratedSample struct {
+	Video GeneratedVideoFile `json:"video"`
+}
+
+// GeneratedVideoFile points at the downloadable MP4.
+type GeneratedVideoFile struct {
+	URI      string `json:"uri"`
+	Encoding string `json:"encoding,omitempty"`
+}
+
+// OperationError is a google.rpc.Status.
+type OperationError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Status  string `json:"status,omitempty"`
+}

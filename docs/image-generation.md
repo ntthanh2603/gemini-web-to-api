@@ -174,7 +174,7 @@ The implementation has been verified with:
 - `n > 1` may require multiple upstream generations.
 - Some prompts may return text without an image.
 - Generated-image URLs in chat responses are session-bound and may expire.
-- Video generation and Web TTS are not part of this image implementation.
+- Video generation is documented separately in [video-generation.md](video-generation.md); Web TTS is not supported.
 - Cookie rotation errors are not always proof that live Gemini requests have stopped working; verify with a real request.
 
 ## Security

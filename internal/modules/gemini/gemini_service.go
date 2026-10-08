@@ -330,6 +330,95 @@ func (s *GeminiService) Client() *providers.Client {
 	return s.client
 }
 
+// StartVideoOperation starts a video job for models/{model}:predictLongRunning.
+func (s *GeminiService) StartVideoOperation(model string, req dto.PredictLongRunningRequest) (*dto.VideoOperation, error) {
+	if len(req.Instances) != 1 {
+		return nil, &providers.VideoValidationError{Message: "exactly one instance is required"}
+	}
+	instance := req.Instances[0]
+	if len(instance.Image) > 0 || len(instance.Video) > 0 {
+		return nil, &providers.VideoValidationError{Message: "image and video inputs are not supported; only text-to-video is available"}
+	}
+	aspectRatio := ""
+	if req.Parameters != nil {
+		if req.Parameters.SampleCount > 1 {
+			return nil, &providers.VideoValidationError{Message: "only one video per request is supported (sampleCount must be 1)"}
+		}
+		aspectRatio = req.Parameters.AspectRatio
+	}
+	aspect, err := providers.ParseVideoAspect("", aspectRatio)
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.client.StartVideoJob(instance.Prompt, model, aspect)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.VideoOperation{Name: videoOperationName(model, job.ID)}, nil
+}
+
+// GetVideoOperation reports a video job as a long-running operation. fileBaseURL
+// is the public "/gemini/v1beta/files" URL the generated video is served from.
+func (s *GeminiService) GetVideoOperation(model, id, fileBaseURL string) (*dto.VideoOperation, error) {
+	job, err := s.client.GetVideoJob(id)
+	if err != nil {
+		return nil, err
+	}
+	operation := &dto.VideoOperation{Name: videoOperationName(model, job.ID), Done: job.Status != providers.VideoJobInProgress}
+	switch job.Status {
+	case providers.VideoJobCompleted:
+		mimeType := job.Video.MimeType
+		if mimeType == "" {
+			mimeType = "video/mp4"
+		}
+		operation.Response = &dto.VideoOperationResponse{
+			Type: "type.googleapis.com/google.ai.generativelanguage.v1beta.PredictLongRunningResponse",
+			GenerateVideoResponse: dto.GenerateVideoResponse{GeneratedSamples: []dto.GeneratedSample{{
+				Video: dto.GeneratedVideoFile{URI: fileBaseURL + "/" + job.ID + ":download?alt=media", Encoding: mimeType},
+			}}},
+		}
+	case providers.VideoJobFailed:
+		operation.Error = videoOperationError(job.Error)
+	}
+	if job.ConversationID != "" {
+		operation.Metadata = map[string]any{"conversationId": job.ConversationID}
+	}
+	return operation, nil
+}
+
+// VideoFile returns the MP4 bytes of a completed video job.
+func (s *GeminiService) VideoFile(id string) ([]byte, string, error) {
+	job, data, err := s.client.VideoJobContent(id)
+	if err != nil {
+		return nil, "", err
+	}
+	mimeType := job.Video.MimeType
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+	return data, mimeType, nil
+}
+
+func videoOperationName(model, id string) string {
+	return "models/" + strings.TrimPrefix(model, "models/") + "/operations/" + id
+}
+
+// videoOperationError maps video failures to google.rpc.Status codes.
+func videoOperationError(err *providers.VideoError) *dto.OperationError {
+	if err == nil {
+		return &dto.OperationError{Code: 13, Message: "video generation failed", Status: "INTERNAL"}
+	}
+	switch err.Code {
+	case providers.VideoErrorQuota:
+		return &dto.OperationError{Code: 8, Message: err.Message, Status: "RESOURCE_EXHAUSTED"}
+	case providers.VideoErrorRefused:
+		return &dto.OperationError{Code: 3, Message: err.Message, Status: "INVALID_ARGUMENT"}
+	case providers.VideoErrorTimeout:
+		return &dto.OperationError{Code: 4, Message: err.Message, Status: "DEADLINE_EXCEEDED"}
+	}
+	return &dto.OperationError{Code: 13, Message: err.Message, Status: "INTERNAL"}
+}
+
 // DeepResearch performs synchronous deep research
 func (s *GeminiService) DeepResearch(ctx context.Context, req dto.DeepResearchRequest) (*dto.DeepResearchResponse, error) {
 	opts := []providers.DeepResearchOption{}

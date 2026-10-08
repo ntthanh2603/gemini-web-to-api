@@ -52,6 +52,9 @@ type Client struct {
 	maxRetries       int
 	cachedModels     []geminiModel
 	defaultTemporary bool
+
+	videoJobsOnce sync.Once
+	videoJobs     *videoJobStore
 }
 
 type CookieStore struct {
@@ -538,6 +541,12 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	if err != nil {
 		return nil, err
 	}
+	if config.Video != nil {
+		inner = applyVideoInner(inner, config.Video.AspectRatio)
+		if err := applyVideoModelHeader(modelHeaders); err != nil {
+			return nil, err
+		}
+	}
 
 	innerJSON, _ := json.Marshal(inner)
 	outer := []interface{}{nil, string(innerJSON)}
@@ -563,7 +572,8 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	generateURL := geminiAccountURL(EndpointGenerate, c.authUser) + "?" + queryValues.Encode()
 
 	maxAttempts := c.maxRetries
-	if maxAttempts <= 0 {
+	// A retried video request could start (and bill) a second generation.
+	if maxAttempts <= 0 || config.Video != nil {
 		maxAttempts = 1
 	}
 
@@ -884,6 +894,7 @@ func (c *Client) StartChat(options ...ChatOption) ChatSession {
 }
 
 func (c *Client) Close() error {
+	c.videoJobStore().close()
 	close(c.stopRefresh)
 	c.mu.Lock()
 	c.healthy = false
@@ -933,6 +944,9 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 	var finalMetadata map[string]any
 	found := false
 	imagesByURL := make(map[string]Image)
+	var videos []Video
+	seenVideos := make(map[string]bool)
+	conversationID := ""
 
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
@@ -969,6 +983,9 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 					continue
 				}
 				collectImages(payload, imagesByURL)
+				if id := conversationIDFromPayload(payload); id != "" {
+					conversationID = id
+				}
 				if len(payload) > 4 {
 					candidates, ok := payload[4].([]interface{})
 					if ok && candidates != nil && len(candidates) > 0 {
@@ -979,6 +996,12 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 							}
 							for _, image := range extractGeneratedImages(candidate) {
 								imagesByURL[image.URL] = image
+							}
+							for _, video := range extractGeneratedVideos(candidate) {
+								if !seenVideos[video.URL] {
+									seenVideos[video.URL] = true
+									videos = append(videos, video)
+								}
 							}
 						}
 						firstCandidate, ok := candidates[0].([]interface{})
@@ -1016,17 +1039,19 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		}
 	}
 
-	if found || len(imagesByURL) > 0 {
+	if found || len(imagesByURL) > 0 || len(videos) > 0 {
 		images := make([]Image, 0, len(imagesByURL))
 		for _, image := range imagesByURL {
 			images = append(images, image)
 		}
 		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
 		return &Response{
-			Text:          cleanText,
-			ReasoningText: reasoning,
-			Images:        images,
-			Metadata:      finalMetadata,
+			Text:           cleanText,
+			ReasoningText:  reasoning,
+			Images:         images,
+			Videos:         videos,
+			Metadata:       finalMetadata,
+			ConversationID: conversationID,
 		}, nil
 	}
 

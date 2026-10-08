@@ -361,3 +361,57 @@ type ImageGenerationData struct {
 	B64JSON       string `json:"b64_json,omitempty"`
 	RevisedPrompt string `json:"revised_prompt,omitempty"`
 }
+
+// VideoGenerationRequest starts an asynchronous text-to-video job. It is
+// accepted as JSON or as multipart/form-data (what the OpenAI SDK sends).
+// Size accepts "1280x720" (default) or "720x1280"; AspectRatio accepts
+// "16:9" or "9:16". Seconds is accepted for SDK compatibility and ignored:
+// Gemini Web decides the clip length.
+type VideoGenerationRequest struct {
+	Model       string `json:"model,omitempty" form:"model"`
+	Prompt      string `json:"prompt" form:"prompt"`
+	Size        string `json:"size,omitempty" form:"size"`
+	Seconds     string `json:"seconds,omitempty" form:"seconds"`
+	AspectRatio string `json:"aspect_ratio,omitempty" form:"aspect_ratio"`
+}
+
+// Video mirrors the OpenAI Videos API object, plus Gemini-specific fields.
+type Video struct {
+	ID             string         `json:"id"`
+	Object         string         `json:"object"`
+	Model          string         `json:"model"`
+	Status         string         `json:"status"`
+	Progress       int            `json:"progress"`
+	CreatedAt      int64          `json:"created_at"`
+	CompletedAt    *int64         `json:"completed_at"`
+	ExpiresAt      *int64         `json:"expires_at"`
+	Prompt         string         `json:"prompt"`
+	Seconds        string         `json:"seconds"`
+	Size           string         `json:"size"`
+	Error          *VideoJobError `json:"error"`
+	ConversationID string         `json:"conversation_id,omitempty"`
+	ContentURL     string         `json:"content_url,omitempty"`
+	Message        string         `json:"message,omitempty"`
+}
+
+// VideoJobError explains why a video job failed.
+type VideoJobError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// VideoList is the response of GET /videos.
+type VideoList struct {
+	Object  string  `json:"object"`
+	Data    []Video `json:"data"`
+	FirstID *string `json:"first_id"`
+	LastID  *string `json:"last_id"`
+	HasMore bool    `json:"has_more"`
+}
+
+// VideoDeleted is the response of DELETE /videos/{id}.
+type VideoDeleted struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Deleted bool   `json:"deleted"`
+}
