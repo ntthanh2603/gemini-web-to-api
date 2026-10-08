@@ -149,7 +149,9 @@ Pick whichever method suits your setup:
 | ------------------ | ------------------------------ | ---------------------------------- |
 | 🐳 Docker Compose  | `docker compose up -d --build` | Docker                             |
 | 🐹 Go direct       | `go run cmd/server/main.go`    | [Go 1.21+](https://golang.org/dl/) |
-| ⚡ Task (dev mode) | `task dev`                     | [Task](https://taskfile.dev)       |
+| ⚡ Task (dev mode) | `task dev`                     | [Task](https://taskfile.dev) + [Air](https://github.com/air-verse/air) (`task install-air`) |
+
+> `task dev` runs the server with **hot reload**: Air rebuilds and restarts it whenever a `.go`, `.json` or `.env` file changes (config in `.air.toml`).
 
 **Done!** Jump to [Test it](#-test-it). 🎉
 

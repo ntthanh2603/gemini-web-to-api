@@ -7,9 +7,14 @@ tasks:
       - go run cmd/server/main.go
 
   dev:
-    desc: Run the server in development mode
+    desc: Run the server with hot reload (air)
     cmds:
-      - go run cmd/server/main.go
+      - air --build.cmd "go build -o ./tmp/server{{exeExt}} ./cmd/server" --build.bin "./tmp/server{{exeExt}}"
+
+  install-air:
+    desc: Install air (hot reload tool)
+    cmds:
+      - go install github.com/air-verse/air@latest
 
   build:
     desc: Build the server binary

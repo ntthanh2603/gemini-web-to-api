@@ -51,3 +51,5 @@ gemini-web-to-api.exe
 
 # pycache
 examples/__pycache__/
+# air hot reload
+tmp/
