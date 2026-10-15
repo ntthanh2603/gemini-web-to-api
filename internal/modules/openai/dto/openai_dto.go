@@ -197,13 +197,14 @@ type ToolChoiceObject struct {
 
 // ChatCompletionRequest represents OpenAI chat completion request
 type ChatCompletionRequest struct {
-	Model         string                  `json:"model"`
-	Messages      []ChatCompletionMessage `json:"messages"`
-	Tools         []ToolDefinition        `json:"tools,omitempty"`
-	ToolChoiceRaw json.RawMessage         `json:"tool_choice,omitempty" swagignore:"true"` // @SchemaType object
-	Stream        bool                    `json:"stream,omitempty"`
-	Temperature   float32                 `json:"temperature,omitempty"`
-	MaxTokens     int                     `json:"max_tokens,omitempty"`
+	Model           string                  `json:"model"`
+	Messages        []ChatCompletionMessage `json:"messages"`
+	Tools           []ToolDefinition        `json:"tools,omitempty"`
+	ToolChoiceRaw   json.RawMessage         `json:"tool_choice,omitempty" swagignore:"true"` // @SchemaType object
+	Stream          bool                    `json:"stream,omitempty"`
+	Temperature     float32                 `json:"temperature,omitempty"`
+	MaxTokens       int                     `json:"max_tokens,omitempty"`
+	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
 }
 
 func (r ChatCompletionRequest) ToModelMessages() []models.Message {

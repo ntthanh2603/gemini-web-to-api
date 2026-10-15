@@ -514,6 +514,10 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 	for _, opt := range options {
 		opt(config)
 	}
+	thinkingLevel, err := ParseThinkingLevel(config.ThinkingLevel)
+	if err != nil {
+		return nil, err
+	}
 	if model, canvas := splitCanvasModel(config.Model); canvas {
 		config.Model = model
 		config.Canvas = true
@@ -559,10 +563,11 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 
 	requestID := strings.ToUpper(uuid.NewString())
 	inner := buildGenerateInner(prompt, uploadedFiles, selectedModel.ModelNumber, language, requestID, c.defaultTemporary)
+	inner[80] = thinkingLevel
 	if metadata != nil {
 		inner[2] = metadata
 	}
-	modelHeaders, err := buildGeminiModelHeaders(selectedModel, requestID, generationID)
+	modelHeaders, err := buildGeminiModelHeaders(selectedModel, requestID, generationID, thinkingLevel)
 	if err != nil {
 		return nil, err
 	}
@@ -828,7 +833,7 @@ func (c *Client) downloadGeneratedImage(ctx context.Context, rawURL, cookieHeade
 
 // buildGeminiModelHeaders uses the routing identity discovered for this account.
 // The ID at index 4 is a model ID, not a randomly generated request/trace ID.
-func buildGeminiModelHeaders(model geminiModel, requestID, generationID string) (map[string]string, error) {
+func buildGeminiModelHeaders(model geminiModel, requestID, generationID string, thinkingLevel int) (map[string]string, error) {
 	if model.ModelID == "" || model.ModelNumber <= 0 || model.Capacity <= 0 ||
 		(model.CapacityField != 12 && model.CapacityField != 13) {
 		return nil, fmt.Errorf("model '%s' has incomplete Gemini routing information", model.ID)
@@ -842,7 +847,7 @@ func buildGeminiModelHeaders(model geminiModel, requestID, generationID string) 
 	// CapacityField is a one-based protocol field number.
 	header[model.CapacityField-1] = model.Capacity
 	header[14+offset] = model.ModelNumber
-	header[15+offset] = 1
+	header[15+offset] = thinkingLevel
 	header[16+offset] = generationID
 	encoded, err := json.Marshal(header)
 	if err != nil {
