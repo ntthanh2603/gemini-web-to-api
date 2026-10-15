@@ -1290,6 +1290,11 @@
         "gemini-web-to-api_internal_modules_openai_dto.ChatCompletionRequest": {
             "type": "object",
             "properties": {
+                "reasoning_effort": {
+                    "description": "Gemini Web thinking level; defaults to low when omitted.",
+                    "type": "string",
+                    "enum": ["low", "medium", "high"]
+                },
                 "max_tokens": {
                     "type": "integer"
                 },

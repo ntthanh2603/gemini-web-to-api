@@ -209,7 +209,7 @@ func TestStartChatRestoresModelFromMetadata(t *testing.T) {
 func TestBuildGeminiModelHeadersSupportsAlternateCapacityField(t *testing.T) {
 	model := generationTestModels()[1]
 	model.CapacityField = 13
-	headers, err := buildGeminiModelHeaders(model, "request-id", "session-id")
+	headers, err := buildGeminiModelHeaders(model, "request-id", "session-id", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

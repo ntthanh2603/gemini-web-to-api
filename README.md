@@ -259,6 +259,23 @@ is preserved in `requested_model`. This keeps the response truthful without
 blocking a model that Gemini still advertises as selectable; after its quota
 resets, `model` returns to the requested version.
 
+### Thinking level (OpenAI-compatible chat)
+
+Set `reasoning_effort` to `low`, `medium`, or `high` in
+`POST /openai/v1/chat/completions`, including streaming requests:
+
+```json
+{
+  "model": "gemini-3.6-flash",
+  "reasoning_effort": "medium",
+  "messages": [{"role": "user", "content": "Explain your answer."}]
+}
+```
+
+Omitting this field preserves the existing low setting. Unsupported values
+return HTTP 400. The mapping is based on Gemini 3.6 Flash browser captures;
+availability of thinking levels on other models depends on Gemini Web.
+
 ### OpenAI SDK (Python)
 
 ```python

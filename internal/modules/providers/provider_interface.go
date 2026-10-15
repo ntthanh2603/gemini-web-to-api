@@ -52,7 +52,7 @@ type Response struct {
 	Videos         []Video        `json:"videos,omitempty"`
 	Canvases       []Canvas       `json:"canvases,omitempty"`
 	Audios         []Audio        `json:"audios,omitempty"`
-	Candidates    []Candidate    `json:"candidates,omitempty"`
+	Candidates     []Candidate    `json:"candidates,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	ChosenIndex    int            `json:"chosen_index"`
 	ConversationID string         `json:"conversation_id,omitempty"`
@@ -99,6 +99,7 @@ type GenerateOption func(*GenerateConfig)
 // GenerateConfig holds generation configuration
 type GenerateConfig struct {
 	Model                   string
+	ThinkingLevel           string
 	Files                   []string
 	InputFiles              []InputFile
 	Temperature             float64
@@ -129,6 +130,13 @@ type ChatConfig struct {
 func WithModel(model string) GenerateOption {
 	return func(c *GenerateConfig) {
 		c.Model = model
+	}
+}
+
+// WithThinkingLevel selects the Gemini Web thinking level for one request.
+func WithThinkingLevel(level string) GenerateOption {
+	return func(c *GenerateConfig) {
+		c.ThinkingLevel = level
 	}
 }
 
