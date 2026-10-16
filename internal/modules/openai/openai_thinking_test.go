@@ -15,6 +15,17 @@ import (
 	"go.uber.org/zap"
 )
 
+func TestGeminiThinkingLevelAcceptsEveryOpenAIReasoningEffort(t *testing.T) {
+	for effort, want := range map[string]int{
+		"": 1, "none": 1, "minimal": 1, "low": 1, "medium": 4, "high": 2, "xhigh": 2, " XHigh ": 2,
+	} {
+		got, err := providers.ParseThinkingLevel(geminiThinkingLevel(effort))
+		if err != nil || got != want {
+			t.Fatalf("reasoning_effort %q: level=%d err=%v, want %d", effort, got, err, want)
+		}
+	}
+}
+
 func TestChatCompletionsRejectInvalidReasoningEffortBeforeModelResolution(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%t", streaming), func(t *testing.T) {

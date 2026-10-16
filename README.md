@@ -272,8 +272,9 @@ Set `reasoning_effort` to `low`, `medium`, or `high` in
 }
 ```
 
-Omitting this field preserves the existing low setting. Unsupported values
-return HTTP 400. The mapping is based on Gemini 3.6 Flash browser captures;
+Omitting this field preserves the existing low setting. The other OpenAI
+values are clamped to the nearest Gemini level (`none` and `minimal` → `low`,
+`xhigh` → `high`); anything else returns HTTP 400. The mapping is based on Gemini 3.6 Flash browser captures;
 availability of thinking levels on other models depends on Gemini Web.
 
 ### OpenAI SDK (Python)

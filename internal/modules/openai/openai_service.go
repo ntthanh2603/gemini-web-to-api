@@ -50,11 +50,24 @@ func (s *OpenAIService) ValidateChatCompletion(req dto.ChatCompletionRequest) er
 	if err := utils.ValidateGenerationRequest(req.Model, req.MaxTokens, req.Temperature); err != nil {
 		return err
 	}
-	if _, err := providers.ParseThinkingLevel(req.ReasoningEffort); err != nil {
+	if _, err := providers.ParseThinkingLevel(geminiThinkingLevel(req.ReasoningEffort)); err != nil {
 		return fmt.Errorf("invalid reasoning_effort: %w", err)
 	}
 	_, err := s.client.ResolveModel(req.Model)
 	return err
+}
+
+// geminiThinkingLevel clamps OpenAI reasoning_effort values that Gemini Web
+// has no level for onto the nearest one, so clients that send them by default
+// keep working instead of getting a 400.
+func geminiThinkingLevel(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "none", "minimal":
+		return "low"
+	case "xhigh":
+		return "high"
+	}
+	return effort
 }
 
 func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCompletionRequest) (*dto.ChatCompletionResponse, error) {
@@ -74,7 +87,7 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 		prompt = s.buildToolBridgePrompt(req, prompt)
 	}
 
-	opts := []providers.GenerateOption{providers.WithThinkingLevel(req.ReasoningEffort)}
+	opts := []providers.GenerateOption{providers.WithThinkingLevel(geminiThinkingLevel(req.ReasoningEffort))}
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}

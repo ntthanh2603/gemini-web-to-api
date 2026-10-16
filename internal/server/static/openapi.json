@@ -1291,9 +1291,9 @@
             "type": "object",
             "properties": {
                 "reasoning_effort": {
-                    "description": "Gemini Web thinking level; defaults to low when omitted.",
+                    "description": "Gemini Web thinking level; defaults to low when omitted. none and minimal map to low, xhigh maps to high.",
                     "type": "string",
-                    "enum": ["low", "medium", "high"]
+                    "enum": ["none", "minimal", "low", "medium", "high", "xhigh"]
                 },
                 "max_tokens": {
                     "type": "integer"
