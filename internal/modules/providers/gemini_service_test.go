@@ -1,11 +1,17 @@
 package providers
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/imroc/req/v3"
 	"go.uber.org/zap"
 )
 
@@ -133,5 +139,105 @@ func TestParseResponseHandlesBardErrorInfo(t *testing.T) {
 	expectedSubstr := "BardErrorInfo code [13 1152]"
 	if !strings.Contains(err.Error(), expectedSubstr) {
 		t.Fatalf("Expected error to contain %q, got: %v", expectedSubstr, err)
+	}
+}
+
+const testPSID = "test-psid"
+
+func writeCookieCache(t *testing.T, psid, ts string) string {
+	t.Helper()
+	if err := os.MkdirAll(".cookies", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256([]byte(psid))
+	name := filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
+	if err := os.WriteFile(name, []byte(ts), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func readCookieCache(t *testing.T, psid string) string {
+	t.Helper()
+	hash := sha256.Sum256([]byte(psid))
+	data, err := os.ReadFile(filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func newInitTestClient(configTS string, refreshFn func(currentTS string) error) *Client {
+	c := &Client{
+		httpClient: req.NewClient(),
+		cookies: &CookieStore{
+			Secure1PSID:   testPSID,
+			Secure1PSIDTS: configTS,
+		},
+		log: zap.NewNop(),
+	}
+	c.refreshSessionTokenFn = func(ctx context.Context) error {
+		return refreshFn(c.cookies.Secure1PSIDTS)
+	}
+	return c
+}
+
+func TestInitValidConfigOverwritesCache(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCookieCache(t, testPSID, "cache-ts")
+
+	c := newInitTestClient("config-ts", func(string) error { return nil })
+	if err := c.Init(context.Background()); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if got := readCookieCache(t, testPSID); got != "config-ts" {
+		t.Fatalf("cache = %q, want config TS %q", got, "config-ts")
+	}
+}
+
+func TestInitFallsBackToCacheWhenConfigRejected(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCookieCache(t, testPSID, "cache-ts")
+
+	var attempts []string
+	c := newInitTestClient("config-ts", func(currentTS string) error {
+		attempts = append(attempts, currentTS)
+		if currentTS == "config-ts" {
+			return errors.New("config rejected")
+		}
+		return nil
+	})
+	c.rotateFn = func() error { return errors.New("rotation must not run when cache succeeds") }
+
+	if err := c.Init(context.Background()); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if len(attempts) != 2 || attempts[0] != "config-ts" || attempts[1] != "cache-ts" {
+		t.Fatalf("attempts = %v, want [config-ts cache-ts]", attempts)
+	}
+	if got := readCookieCache(t, testPSID); got != "cache-ts" {
+		t.Fatalf("cache = %q, want cached TS preserved %q", got, "cache-ts")
+	}
+}
+
+func TestInitFailsWhenConfigAndCacheStaleAndPreservesCache(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cacheFile := writeCookieCache(t, testPSID, "cache-ts")
+
+	c := newInitTestClient("config-ts", func(string) error { return errors.New("config rejected") })
+	c.rotateFn = func() error { return errors.New("rotation failed") }
+
+	err := c.Init(context.Background())
+	if err == nil {
+		t.Fatal("Init succeeded, want error")
+	}
+	if err.Error() != "config rejected" {
+		t.Fatalf("Init error = %v, want the config attempt error", err)
+	}
+	if got := readCookieCache(t, testPSID); got != "cache-ts" {
+		t.Fatalf("cache = %q after failed init, want untouched %q", got, "cache-ts")
+	}
+	if info, statErr := os.Stat(cacheFile); statErr != nil || info.Size() == 0 {
+		t.Fatalf("cache file missing or empty after failed init: %v", statErr)
 	}
 }
