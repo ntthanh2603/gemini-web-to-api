@@ -135,3 +135,71 @@ func TestParseResponseHandlesBardErrorInfo(t *testing.T) {
 		t.Fatalf("Expected error to contain %q, got: %v", expectedSubstr, err)
 	}
 }
+
+func buildWireLine(t *testing.T, payload []interface{}) string {
+	t.Helper()
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := []interface{}{
+		[]interface{}{nil, nil, string(payloadJSON)},
+	}
+	rootJSON, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(rootJSON)
+}
+
+func TestParseResponseExtractsUsageMetadata(t *testing.T) {
+	payload := []interface{}{
+		nil,
+		"conversation-id",
+		nil,
+		nil,
+		[]interface{}{
+			[]interface{}{"response-id", []interface{}{"done"}},
+		},
+		map[string]interface{}{
+			"usageMetadata": map[string]interface{}{
+				"promptTokenCount":     11.0,
+				"candidatesTokenCount": 7.0,
+				"totalTokenCount":      18.0,
+			},
+		},
+	}
+
+	client := &Client{log: zap.NewNop()}
+	resp, err := client.parseResponse(buildWireLine(t, payload))
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if resp.Usage == nil {
+		t.Fatal("expected usage metadata, got nil")
+	}
+	if resp.Usage.PromptTokens != 11 || resp.Usage.CompletionTokens != 7 || resp.Usage.TotalTokens != 18 {
+		t.Fatalf("usage = %+v, want 11/7/18", resp.Usage)
+	}
+}
+
+func TestParseResponseWithoutUsageMetadataLeavesItNil(t *testing.T) {
+	payload := []interface{}{
+		nil,
+		"conversation-id",
+		nil,
+		nil,
+		[]interface{}{
+			[]interface{}{"response-id", []interface{}{"done"}},
+		},
+	}
+
+	client := &Client{log: zap.NewNop()}
+	resp, err := client.parseResponse(buildWireLine(t, payload))
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if resp.Usage != nil {
+		t.Fatalf("usage = %+v, want nil when the wire format carries no counts", resp.Usage)
+	}
+}

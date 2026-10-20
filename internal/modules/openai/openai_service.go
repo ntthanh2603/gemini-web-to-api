@@ -155,6 +155,16 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	message.Canvases = providers.CanvasFiles(response.Canvases)
 
 	// Logic: Construct Response
+	usage := models.Usage{
+		PromptTokens:     0,
+		CompletionTokens: 0,
+		TotalTokens:      0,
+	}
+	if response.Usage != nil {
+		usage.PromptTokens = int(response.Usage.PromptTokens)
+		usage.CompletionTokens = int(response.Usage.CompletionTokens)
+		usage.TotalTokens = int(response.Usage.TotalTokens)
+	}
 	return &dto.ChatCompletionResponse{
 		ID:             fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
 		Object:         "chat.completion",
@@ -168,11 +178,7 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 				FinishReason: finishReason,
 			},
 		},
-		Usage: models.Usage{
-			PromptTokens:     0,
-			CompletionTokens: 0,
-			TotalTokens:      0,
-		},
+		Usage: usage,
 	}, nil
 }
 

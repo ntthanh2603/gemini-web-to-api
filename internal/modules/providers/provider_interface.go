@@ -41,6 +41,14 @@ type ChatSession interface {
 	Clear()
 }
 
+// UsageMetadata carries token counts reported by the upstream response, when
+// the wire format includes them.
+type UsageMetadata struct {
+	PromptTokens     int64 `json:"prompt_tokens,omitempty"`
+	CompletionTokens int64 `json:"completion_tokens,omitempty"`
+	TotalTokens      int64 `json:"total_tokens,omitempty"`
+}
+
 // Response represents a provider's response
 type Response struct {
 	Model          string         `json:"model,omitempty"`
@@ -54,6 +62,7 @@ type Response struct {
 	Audios         []Audio        `json:"audios,omitempty"`
 	Candidates     []Candidate    `json:"candidates,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
+	Usage          *UsageMetadata `json:"usage,omitempty"`
 	ChosenIndex    int            `json:"chosen_index"`
 	ConversationID string         `json:"conversation_id,omitempty"`
 	ResponseID     string         `json:"response_id,omitempty"`

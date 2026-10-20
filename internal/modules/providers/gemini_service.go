@@ -999,6 +999,7 @@ func (c *Client) ListModelsIDs() []string {
 func (c *Client) parseResponse(text string) (*Response, error) {
 	var finalResText string
 	var finalMetadata map[string]any
+	var finalUsage map[string]any
 	found := false
 	imagesByURL := make(map[string]Image)
 	var videos []Video
@@ -1043,6 +1044,11 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 					continue
 				}
 				collectImages(payload, imagesByURL)
+				if um := findUsageMetadata(payload); um != nil {
+					// Later frames win: streamed responses repeat metadata,
+					// and the final frame carries the authoritative counts.
+					finalUsage = um
+				}
 				if id := conversationIDFromPayload(payload); id != "" {
 					conversationID = id
 				}
@@ -1133,6 +1139,14 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		}
 		finalResText = renderCanvasPlaceholders(finalResText, canvases)
 		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
+		var usage *UsageMetadata
+		if finalUsage != nil {
+			usage = &UsageMetadata{
+				PromptTokens:     usageCount(finalUsage, "promptTokenCount"),
+				CompletionTokens: usageCount(finalUsage, "candidatesTokenCount"),
+				TotalTokens:      usageCount(finalUsage, "totalTokenCount"),
+			}
+		}
 		return &Response{
 			Text:           cleanText,
 			ReasoningText:  reasoning,
@@ -1141,6 +1155,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 			Canvases:       canvases,
 			Audios:         audios,
 			Metadata:       finalMetadata,
+			Usage:          usage,
 			ConversationID: conversationID,
 		}, nil
 	}
@@ -1150,6 +1165,42 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		sample = sample[:500]
 	}
 	return nil, fmt.Errorf("failed to parse response. Sample: %s", sample)
+}
+
+// findUsageMetadata recursively searches a decoded payload for a
+// usageMetadata object, as carried by Gemini responses.
+func findUsageMetadata(v any) map[string]any {
+	switch val := v.(type) {
+	case map[string]any:
+		if um, ok := val["usageMetadata"].(map[string]any); ok {
+			return um
+		}
+		for _, child := range val {
+			if um := findUsageMetadata(child); um != nil {
+				return um
+			}
+		}
+	case []any:
+		for _, child := range val {
+			if um := findUsageMetadata(child); um != nil {
+				return um
+			}
+		}
+	}
+	return nil
+}
+
+// usageCount extracts an integer count from a decoded JSON object.
+func usageCount(m map[string]any, key string) int64 {
+	switch v := m[key].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	}
+	return 0
 }
 
 // extractBardError recursively searches for BardErrorInfo and extracts codes/messages
