@@ -87,3 +87,52 @@ func TestChatCompletionMessageUnmarshal(t *testing.T) {
 		}
 	})
 }
+
+func TestChatCompletionRequestJSONResponseRequested(t *testing.T) {
+	const schema = `{"type":"object","required":["name"]}`
+
+	tests := []struct {
+		name       string
+		body       string
+		wantActive bool
+		wantSchema string
+	}{
+		{name: "absent", body: `{}`},
+		{name: "text", body: `{"response_format":{"type":"text"}}`},
+		{name: "unknown type", body: `{"response_format":{"type":"xml"}}`},
+		{name: "json_object", body: `{"response_format":{"type":"json_object"}}`, wantActive: true},
+		{
+			name:       "json_schema with the OpenAI wrapper",
+			body:       `{"response_format":{"type":"json_schema","json_schema":{"name":"person","strict":true,"schema":` + schema + `}}}`,
+			wantActive: true,
+			wantSchema: schema,
+		},
+		{
+			name:       "json_schema sent inline",
+			body:       `{"response_format":{"type":"json_schema","json_schema":` + schema + `}}`,
+			wantActive: true,
+			wantSchema: schema,
+		},
+		{
+			name:       "uppercase type",
+			body:       `{"response_format":{"type":"JSON_OBJECT"}}`,
+			wantActive: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(tt.body), &req); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			gotSchema, active := req.JSONResponseRequested()
+			if active != tt.wantActive {
+				t.Fatalf("active = %v, want %v", active, tt.wantActive)
+			}
+			if string(gotSchema) != tt.wantSchema {
+				t.Errorf("schema = %s, want %q", gotSchema, tt.wantSchema)
+			}
+		})
+	}
+}

@@ -182,6 +182,7 @@ Your Gemini Web To API is running at `http://localhost:4981` 🎉
 - 🎬 **Video Generation**: Text-to-video (16:9 or 9:16 MP4) via Gemini Web's Videos tool, usable from the OpenAI (`client.videos`) and Google GenAI (`generate_videos`) SDKs
 - 🧾 **Canvas**: Gemini Canvas code files and documents via any chat API — just use a `-canvas` model (e.g. `gemini-auto-canvas`)
 - 🎵 **Music Generation**: Gemini Web's music tool through `client.audio.speech` (OpenAI) and `-music` models (Gemini)
+- 🧱 **JSON Responses**: OpenAI `response_format` (`json_object` / `json_schema`) is asked for in the prompt, fenced or prose-wrapped replies are cleaned, and one repair attempt is made before falling back to the raw text
 
 See [Image generation and image inputs](docs/image-generation.md) for tested examples, limitations and security guidance.
 See [Video generation](docs/video-generation.md) for the video APIs and the [OpenAI](examples/openai_video_client.py) / [Gemini](examples/gemini_video_client.py) SDK examples.
@@ -286,6 +287,43 @@ Omitting this field preserves the existing low setting. The other OpenAI
 values are clamped to the nearest Gemini level (`none` and `minimal` → `low`,
 `xhigh` → `high`); anything else returns HTTP 400. The mapping is based on Gemini 3.6 Flash browser captures;
 availability of thinking levels on other models depends on Gemini Web.
+
+### JSON responses (`response_format`, OpenAI-compatible chat)
+
+`POST /openai/v1/chat/completions` accepts OpenAI's `response_format`, for both
+streaming and non-streaming requests:
+
+```json
+{
+  "model": "gemini-3.6-flash",
+  "messages": [{"role": "user", "content": "Invent a person."}],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "person",
+      "schema": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+        "required": ["name", "age"]
+      }
+    }
+  }
+}
+```
+
+Gemini Web has no JSON mode, so this is best-effort:
+
+- The prompt asks for JSON only, with no code fences and no text around it.
+- A `json` markdown code fence and any prose around the JSON are stripped before
+  the reply is checked: `json_object` needs valid JSON that parses to an object,
+  `json_schema` also needs the requested top-level type and every required key
+  (deeper schema checks are not enforced).
+- A reply that does not match is sent back to Gemini **once** for a repair. That
+  is a second request on your Google account, so it never loops: if the repair is
+  still invalid, the raw reply is returned and a warning is logged.
+- `{"type": "text"}` (the default) and unknown types are ignored. When the model
+  calls a tool, the tool call is returned unchanged and JSON mode is skipped, so
+  a tool call is never re-asked for JSON.
 
 ### OpenAI SDK (Python)
 
