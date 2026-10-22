@@ -7,11 +7,46 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"gemini-web-to-api/internal/commons/models"
 
 	"go.uber.org/zap"
 )
+
+// EstimateTokens approximates a SentencePiece token count for text when the
+// upstream wire carries no usage metadata. It is rune-based with per-script
+// weighting: CJK runes (Han, Hiragana, Katakana, Hangul) count ~1 token each,
+// every other rune counts ~1/4 token. It replaces the old len(bytes)/4
+// heuristic, which heavily overcounts multi-byte scripts (Vietnamese, CJK).
+//
+// Token-count priority on every endpoint, highest first:
+//  1. Real usageMetadata from the wire (when Google sends it).
+//  2. An exact tokenizer, when configured (GEMINI_TOKENIZER_MODEL; future).
+//  3. This heuristic, always available with zero config.
+//
+// Estimates are not billing-grade; they exist so clients that track context
+// or cost get a plausible signal instead of zeros.
+func EstimateTokens(text string) int {
+	var cjk, other int
+	for _, r := range text {
+		if isCJKRune(r) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return cjk + (other+3)/4
+}
+
+// isCJKRune reports whether r belongs to a script that SentencePiece-style
+// tokenizers emit at roughly one token per character.
+func isCJKRune(r rune) bool {
+	return unicode.Is(unicode.Han, r) ||
+		unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) ||
+		unicode.Is(unicode.Hangul, r)
+}
 
 // BuildPromptFromMessages constructs a unified prompt from messages
 func BuildPromptFromMessages(messages []models.Message, systemPrompt string) string {

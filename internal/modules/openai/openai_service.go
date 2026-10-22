@@ -155,15 +155,18 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	message.Canvases = providers.CanvasFiles(response.Canvases)
 
 	// Logic: Construct Response
-	usage := models.Usage{
-		PromptTokens:     0,
-		CompletionTokens: 0,
-		TotalTokens:      0,
-	}
+	// Token-count priority: real usageMetadata from the wire, then the
+	// shared heuristic estimate (utils.EstimateTokens) so clients that track
+	// context or cost get a plausible signal instead of zeros.
+	usage := models.Usage{}
 	if response.Usage != nil {
 		usage.PromptTokens = int(response.Usage.PromptTokens)
 		usage.CompletionTokens = int(response.Usage.CompletionTokens)
 		usage.TotalTokens = int(response.Usage.TotalTokens)
+	} else {
+		usage.PromptTokens = utils.EstimateTokens(prompt)
+		usage.CompletionTokens = utils.EstimateTokens(response.Text)
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 	return &dto.ChatCompletionResponse{
 		ID:             fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
