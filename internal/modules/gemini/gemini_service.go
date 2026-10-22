@@ -99,6 +99,19 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 		}
 	}
 
+	// Token-count priority: real usageMetadata from the wire, then the
+	// shared heuristic estimate (utils.EstimateTokens).
+	usage := &dto.UsageMetadata{
+		PromptTokenCount:     int32(utils.EstimateTokens(prompt)),
+		CandidatesTokenCount: int32(utils.EstimateTokens(response.Text)),
+	}
+	usage.TotalTokenCount = usage.PromptTokenCount + usage.CandidatesTokenCount
+	if response.Usage != nil {
+		usage.PromptTokenCount = int32(response.Usage.PromptTokens)
+		usage.CandidatesTokenCount = int32(response.Usage.CompletionTokens)
+		usage.TotalTokenCount = int32(response.Usage.TotalTokens)
+	}
+
 	return &dto.GeminiGenerateResponse{
 		Candidates: []dto.Candidate{
 			{
@@ -110,9 +123,7 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 				FinishReason: finishReason,
 			},
 		},
-		UsageMetadata: &dto.UsageMetadata{
-			TotalTokenCount: 0,
-		},
+		UsageMetadata: usage,
 	}, nil
 }
 

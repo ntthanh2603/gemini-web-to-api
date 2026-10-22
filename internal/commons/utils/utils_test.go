@@ -2,6 +2,34 @@ package utils
 
 import "testing"
 
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want int
+	}{
+		{name: "empty", text: "", want: 0},
+		// 11 non-CJK runes -> ceil(11/4) = 3
+		{name: "english sentence", text: "Hello world", want: 3},
+		// rune-based: 5 Han runes count ~1 token each; bytes/4 would say 3
+		{name: "cjk one token per rune", text: "你好世界啊", want: 5},
+		{name: "japanese kana", text: "こんにちは", want: 5},
+		{name: "korean hangul", text: "안녕하세요", want: 5},
+		// Vietnamese: 44 runes, 0 CJK -> 11; bytes/4 would overcount (~1.5x)
+		{name: "vietnamese multibyte", text: "Xin chào, đây là một câu tiếng Việt để thử", want: 11},
+		// 2 CJK + 4 other -> 2 + ceil(4/4) = 3
+		{name: "mixed scripts", text: "你好 abc", want: 3},
+		{name: "longer english", text: "The quick brown fox jumps over the lazy dog again and again and again and again ok", want: 21},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := EstimateTokens(tt.text); got != tt.want {
+				t.Errorf("EstimateTokens(%q) = %d, want %d", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractThinkingAndText(t *testing.T) {
 	tests := []struct {
 		name          string

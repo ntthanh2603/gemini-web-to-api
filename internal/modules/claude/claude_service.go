@@ -102,6 +102,18 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		resContent = append(resContent, dto.ConfigContent{Type: "text", Text: response.Text})
 	}
 
+	// Token-count priority: real usageMetadata from the wire, then the
+	// shared heuristic estimate (utils.EstimateTokens) — the previous
+	// len(bytes)/4 shortcut overcounted multi-byte scripts.
+	usage := models.Usage{
+		InputTokens:  common.EstimateTokens(prompt),
+		OutputTokens: common.EstimateTokens(response.Text),
+	}
+	if response.Usage != nil {
+		usage.InputTokens = int(response.Usage.PromptTokens)
+		usage.OutputTokens = int(response.Usage.CompletionTokens)
+	}
+
 	return &dto.MessageResponse{
 		ID:         msgID,
 		Type:       "message",
@@ -109,11 +121,8 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		Model:      response.Model,
 		Content:    resContent,
 		StopReason: stopReason,
-		Usage: models.Usage{
-			InputTokens:  len(prompt) / 4,
-			OutputTokens: len(response.Text) / 4,
-		},
-		Canvases: providers.CanvasFiles(response.Canvases),
+		Usage:      usage,
+		Canvases:   providers.CanvasFiles(response.Canvases),
 	}, nil
 }
 

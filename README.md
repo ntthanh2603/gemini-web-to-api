@@ -182,6 +182,15 @@ Your Gemini Web To API is running at `http://localhost:4981` 🎉
 - 🎬 **Video Generation**: Text-to-video (16:9 or 9:16 MP4) via Gemini Web's Videos tool, usable from the OpenAI (`client.videos`) and Google GenAI (`generate_videos`) SDKs
 - 🧾 **Canvas**: Gemini Canvas code files and documents via any chat API — just use a `-canvas` model (e.g. `gemini-auto-canvas`)
 - 🎵 **Music Generation**: Gemini Web's music tool through `client.audio.speech` (OpenAI) and `-music` models (Gemini)
+- 🔢 **Token usage estimates**: All endpoints report plausible `usage` counts even though Gemini Web never sends real ones — see below
+
+### Token usage reporting
+
+Gemini Web's wire format carries no token counts, so this server reports
+**estimates** (`usage` on OpenAI, `usage` on Claude, `usageMetadata` on Gemini).
+They come from a rune-based, per-script heuristic and are meant for context
+tracking and relative load monitoring — they are **not billing-grade**. If
+Google ever sends real `usageMetadata`, it is reported verbatim instead.
 
 See [Image generation and image inputs](docs/image-generation.md) for tested examples, limitations and security guidance.
 See [Video generation](docs/video-generation.md) for the video APIs and the [OpenAI](examples/openai_video_client.py) / [Gemini](examples/gemini_video_client.py) SDK examples.
