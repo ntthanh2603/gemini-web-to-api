@@ -5,12 +5,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"gemini-web-to-api/internal/commons/models"
 
 	"go.uber.org/zap"
+)
+
+// Web-UI artifact patterns. They are intentionally narrow so that normal content
+// is never rewritten: only numeric citation lists, the [cite_start] marker and
+// code-event query suffixes attached to a markdown code-fence opening line.
+var (
+	// citationMarkerRe matches "[cite: 3]" and "[cite: 3, 7]".
+	citationMarkerRe = regexp.MustCompile(`\[cite:[ 	]*\d+(?:[ 	]*,[ 	]*\d+)*\]`)
+	// citeStartMarkerRe matches the "[cite_start]" marker preceding a cited passage.
+	citeStartMarkerRe = regexp.MustCompile(`\[cite_start\]`)
+	// codeFenceArtifactRe matches a code-fence opening line carrying a web-UI
+	// code-event suffix, e.g. "```python?code_reference&code_event_index=1" or
+	// "```text?code_stdout&code_event_index=1". The suffix is dropped, the fence
+	// and its language tag are kept.
+	codeFenceArtifactRe = regexp.MustCompile("^([ 	]*```[^\\s?]*)\\?(?:code_reference|code_stdout)(?:&[A-Za-z0-9_.=&%~-]*)?[ 	\r]*$")
 )
 
 // BuildPromptFromMessages constructs a unified prompt from messages
@@ -292,6 +308,74 @@ func StripCodeFence(text string) string {
 		trimmed = strings.TrimSpace(trimmed[:idx])
 	}
 	return trimmed
+}
+
+// StripCitationArtifacts removes the citation and code-event artifacts that Gemini's
+// web UI injects into response text. It is deliberately narrow: only "[cite: N]" /
+// "[cite: N, M]" lists, "[cite_start]" markers and "?code_reference..." /
+// "?code_stdout..." suffixes on markdown code-fence opening lines are removed, so
+// ordinary prose (including literal brackets and unfenced query strings) is left
+// untouched.
+func StripCitationArtifacts(text string) string {
+	if text == "" {
+		return text
+	}
+	if !strings.Contains(text, "[cite") && !strings.Contains(text, "?code_") {
+		return text
+	}
+
+	text = removeInlineMarkers(text, citationMarkerRe)
+	text = removeInlineMarkers(text, citeStartMarkerRe)
+
+	if !strings.Contains(text, "?code_") {
+		return text
+	}
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		m := codeFenceArtifactRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if strings.HasSuffix(line, "\r") {
+			lines[i] = m[1] + "\r"
+			continue
+		}
+		lines[i] = m[1]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// removeInlineMarkers deletes every match of re from text. When a marker sits
+// between words it is simply cut out; when it sits before punctuation or at the
+// end of a line, one preceding space is removed too so no "word ." or trailing
+// space is left behind.
+func removeInlineMarkers(text string, re *regexp.Regexp) string {
+	matches := re.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		gluedToWord := false
+		if end < len(text) {
+			next := text[end]
+			gluedToWord = next >= 0x80 ||
+				(next >= 'a' && next <= 'z') ||
+				(next >= 'A' && next <= 'Z') ||
+				(next >= '0' && next <= '9')
+		}
+		if !gluedToWord && start > last && text[start-1] == ' ' {
+			start--
+		}
+		b.WriteString(text[last:start])
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 // ExtractThinkingAndText separates the thinking process and final text from the raw string.

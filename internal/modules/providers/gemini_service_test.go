@@ -210,6 +210,39 @@ func TestParseResponseWithoutUsageMetadataLeavesItNil(t *testing.T) {
 	}
 }
 
+// TestParseResponseStripsCitationArtifacts proves the sanitize step is wired into
+// the provider's shared text path, so every endpoint served from Response.Text
+// gets clean output.
+func TestParseResponseStripsCitationArtifacts(t *testing.T) {
+	const raw = "Here is the total [cite: 3, 7]:\n\n" +
+		"```python?code_reference&code_event_index=1\nprint(2 + 2)\n\n```\n\n" +
+		"```text?code_stdout&code_event_index=1\n4\n```\n\n" +
+		"That is all [cite_start]done."
+	const want = "Here is the total:\n\n" +
+		"```python\nprint(2 + 2)\n\n```\n\n" +
+		"```text\n4\n```\n\n" +
+		"That is all done."
+
+	payload := []interface{}{
+		nil,
+		"conversation-id",
+		nil,
+		nil,
+		[]interface{}{
+			[]interface{}{"response-id", []interface{}{raw}},
+		},
+	}
+
+	client := &Client{log: zap.NewNop()}
+	resp, err := client.parseResponse(buildWireLine(t, payload))
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if resp.Text != want {
+		t.Fatalf("text = %q, want %q", resp.Text, want)
+	}
+}
+
 const testPSID = "test-psid"
 
 func writeCookieCache(t *testing.T, psid, ts string) string {

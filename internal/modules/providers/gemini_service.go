@@ -1175,6 +1175,10 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		}
 		finalResText = renderCanvasPlaceholders(finalResText, canvases)
 		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
+		// Gemini's web UI leaks citation markers and code-event fence suffixes into
+		// the response body. Strip them here, at the single text path shared by the
+		// OpenAI, Claude and Gemini-native endpoints.
+		cleanText = utils.StripCitationArtifacts(cleanText)
 		var usage *UsageMetadata
 		if finalUsage != nil {
 			usage = &UsageMetadata{

@@ -182,6 +182,7 @@ Your Gemini Web To API is running at `http://localhost:4981` 🎉
 - 🎬 **Video Generation**: Text-to-video (16:9 or 9:16 MP4) via Gemini Web's Videos tool, usable from the OpenAI (`client.videos`) and Google GenAI (`generate_videos`) SDKs
 - 🧾 **Canvas**: Gemini Canvas code files and documents via any chat API — just use a `-canvas` model (e.g. `gemini-auto-canvas`)
 - 🎵 **Music Generation**: Gemini Web's music tool through `client.audio.speech` (OpenAI) and `-music` models (Gemini)
+- 🧹 **Clean Output**: Web-UI citation artifacts (`[cite: N]`, `[cite: N, M]`, `[cite_start]` and `?code_reference` / `?code_stdout` code-fence suffixes) are stripped from response text on every endpoint
 
 See [Image generation and image inputs](docs/image-generation.md) for tested examples, limitations and security guidance.
 See [Video generation](docs/video-generation.md) for the video APIs and the [OpenAI](examples/openai_video_client.py) / [Gemini](examples/gemini_video_client.py) SDK examples.
