@@ -53,6 +53,12 @@ type Client struct {
 	cachedModels     []geminiModel
 	defaultTemporary bool
 
+	// refreshSessionTokenFn is a test seam for Init; nil uses the real
+	// refreshSessionToken implementation.
+	refreshSessionTokenFn func(ctx context.Context) error
+	// rotateFn is a test seam for Init; nil uses the real RotateCookies.
+	rotateFn func() error
+
 	videoJobsOnce sync.Once
 	videoJobs     *videoJobStore
 }
@@ -114,17 +120,15 @@ func (c *Client) Init(ctx context.Context) error {
 	configPSIDTS := cleanCookie(c.cookies.Secure1PSIDTS) // Save original config value
 	c.cookies.Secure1PSIDTS = configPSIDTS
 
-	// Check if we should use cached cookies or clear cache
-	if c.cookies.Secure1PSID != "" {
-		cachedTS, err := c.LoadCachedCookies()
-
-		// If config has a new PSIDTS that differs from cache, clear cache and use config
-		if configPSIDTS != "" && cachedTS != "" && configPSIDTS != cachedTS {
-			_ = c.ClearCookieCache()
-			// Keep using the config value (already set above)
-		} else if err == nil && cachedTS != "" && configPSIDTS == "" {
-			// Only use cache if config doesn't provide PSIDTS
+	// If the config doesn't provide a PSIDTS, fall back to the cached value
+	// (legacy split-key workflow). When both are present the config value is
+	// tried first; the cache is only consulted again if the config value is
+	// rejected by the server (see below). The cache is never deleted on
+	// mismatch — SaveCachedCookies records whichever source succeeds.
+	if c.cookies.Secure1PSID != "" && c.cookies.Secure1PSIDTS == "" {
+		if cachedTS, err := c.LoadCachedCookies(); err == nil && cachedTS != "" {
 			c.cookies.Secure1PSIDTS = cachedTS
+			configPSIDTS = cachedTS
 			c.log.Info("Loaded __Secure-1PSIDTS from cache")
 		}
 	}
@@ -142,21 +146,36 @@ func (c *Client) Init(ctx context.Context) error {
 	// Populate cookies
 	c.httpClient.SetCommonCookies(c.cookies.ToHTTPCookies()...)
 
-	// Get SNlM0e token
-	err := c.refreshSessionToken(ctx)
+	// Get SNlM0e token. Config value first; if the server rejects it and a
+	// different cached TS exists for the same PSID, retry with the cache
+	// before attempting cookie rotation. If everything fails, return the
+	// error from the config attempt — that is the one the user can act on.
+	configErr := c.refreshSessionTokenCompat(ctx)
+	err := configErr
 	if err != nil {
 		c.log.Debug("Initial session token fetch failed, attempting cookie rotation", zap.Error(err))
-		// Try to rotate cookies and retry
-		if rotErr := c.RotateCookies(); rotErr == nil {
-			c.log.Debug("Cookie rotation succeeded, retrying session token fetch")
-			err = c.refreshSessionToken(ctx)
-		} else {
-			c.log.Debug("Cookie rotation failed", zap.Error(rotErr))
+		if cachedTS, cerr := c.LoadCachedCookies(); cerr == nil && cachedTS != "" && cachedTS != configPSIDTS {
+			c.log.Info("Config __Secure-1PSIDTS rejected, retrying with cached value")
+			c.cookies.Secure1PSIDTS = cachedTS
+			c.httpClient.SetCommonCookies(c.cookies.ToHTTPCookies()...)
+			err = c.refreshSessionTokenCompat(ctx)
+			if err == nil {
+				c.log.Info("Initialized using cached __Secure-1PSIDTS")
+			}
+		}
+		if err != nil {
+			// Try to rotate cookies and retry
+			if rotErr := c.rotateCompat(); rotErr == nil {
+				c.log.Debug("Cookie rotation succeeded, retrying session token fetch")
+				err = c.refreshSessionTokenCompat(ctx)
+			} else {
+				c.log.Debug("Cookie rotation failed", zap.Error(rotErr))
+			}
 		}
 	}
 
 	if err != nil {
-		return err
+		return configErr
 	}
 
 	// Save the valid cookies to cache immediately after successful init
@@ -170,6 +189,15 @@ func (c *Client) Init(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// refreshSessionTokenCompat runs the session-token step, honoring the test
+// seam when set.
+func (c *Client) refreshSessionTokenCompat(ctx context.Context) error {
+	if c.refreshSessionTokenFn != nil {
+		return c.refreshSessionTokenFn(ctx)
+	}
+	return c.refreshSessionToken(ctx)
 }
 
 func (c *Client) refreshSessionToken(ctx context.Context) error {
@@ -406,6 +434,14 @@ func refreshSessionHealth(rotate, refreshToken func() error) (rotateErr, session
 	// Always verify against Gemini before deciding that the provider is unhealthy.
 	sessionErr = refreshToken()
 	return rotateErr, sessionErr, rotateErr == nil || sessionErr == nil
+}
+
+// rotateCompat runs cookie rotation, honoring the test seam when set.
+func (c *Client) rotateCompat() error {
+	if c.rotateFn != nil {
+		return c.rotateFn()
+	}
+	return c.RotateCookies()
 }
 
 func (c *Client) RotateCookies() error {
