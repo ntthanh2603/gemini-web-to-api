@@ -58,6 +58,9 @@ type Client struct {
 	refreshSessionTokenFn func(ctx context.Context) error
 	// rotateFn is a test seam for Init; nil uses the real RotateCookies.
 	rotateFn func() error
+	// sessionValidator is a test seam for UpdateCookies; nil uses the real
+	// Google session check.
+	sessionValidator func(ctx context.Context, cookieHeader string) error
 
 	videoJobsOnce sync.Once
 	videoJobs     *videoJobStore
@@ -67,7 +70,10 @@ type CookieStore struct {
 	Secure1PSID   string    `json:"__Secure-1PSID"`
 	Secure1PSIDTS string    `json:"__Secure-1PSIDTS"`
 	UpdatedAt     time.Time `json:"updated_at"`
-	mu            sync.RWMutex
+	// Source records where the in-use cookie set came from ("env", "rotation",
+	// "admin-api"). It carries no secret material and is safe to expose.
+	Source string `json:"source,omitempty"`
+	mu     sync.RWMutex
 }
 
 const (
@@ -85,10 +91,22 @@ var (
 )
 
 func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
+	return newClient(cfg, log, nil)
+}
+
+// NewClientWithSessionValidator builds a client whose live session check is
+// replaced by validate. Production wiring uses NewClient; tests use this to
+// exercise cookie updates without reaching Google.
+func NewClientWithSessionValidator(cfg *configs.Config, log *zap.Logger, validate func(ctx context.Context, cookieHeader string) error) *Client {
+	return newClient(cfg, log, validate)
+}
+
+func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.Context, cookieHeader string) error) *Client {
 	cookies := &CookieStore{
 		Secure1PSID:   cfg.Gemini.Secure1PSID,
 		Secure1PSIDTS: cfg.Gemini.Secure1PSIDTS,
 		UpdatedAt:     time.Now(),
+		Source:        CookieSourceEnv,
 	}
 
 	client := req.NewClient().
@@ -111,6 +129,7 @@ func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
 		maxRetries:             cfg.Gemini.MaxRetries,
 		log:                    log,
 		defaultTemporary:       cfg.Gemini.Temporary,
+		sessionValidator:       validate,
 	}
 }
 
@@ -489,6 +508,7 @@ func (c *Client) RotateCookies() error {
 		if cookie.Name == "__Secure-1PSIDTS" {
 			c.cookies.Secure1PSIDTS = cookie.Value
 			c.cookies.UpdatedAt = time.Now()
+			c.cookies.Source = CookieSourceRotation
 			found = true
 			// Save the new cookie to cache immediately
 			_ = c.SaveCachedCookies()
@@ -514,6 +534,7 @@ func (c *Client) GetCookies() *CookieStore {
 		Secure1PSID:   c.cookies.Secure1PSID,
 		Secure1PSIDTS: c.cookies.Secure1PSIDTS,
 		UpdatedAt:     c.cookies.UpdatedAt,
+		Source:        c.cookies.Source,
 	}
 }
 
