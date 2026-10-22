@@ -1044,6 +1044,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 	var audios []Audio
 	seenAudio := make(map[string]bool)
 	conversationID := ""
+	var labels reasoningLabels
 
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
@@ -1080,6 +1081,11 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 					continue
 				}
 				collectImages(payload, imagesByURL)
+				// Thinking models stream their thought summary as a status
+				// label on small wrb.fr frames before the answer arrives.
+				if label := extractReasoningLabel(payload); label != "" {
+					labels.add(label)
+				}
 				if um := findUsageMetadata(payload); um != nil {
 					// Later frames win: streamed responses repeat metadata,
 					// and the final frame carries the authoritative counts.
@@ -1174,7 +1180,13 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 			images = append(images, image)
 		}
 		finalResText = renderCanvasPlaceholders(finalResText, canvases)
-		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
+		markerReasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
+		// Label frames are the modern shape; the <ctrl94>/<ctrl95> block is
+		// kept as a fallback for captures that still inline the old trace.
+		reasoning := labels.text()
+		if reasoning == "" {
+			reasoning = markerReasoning
+		}
 		var usage *UsageMetadata
 		if finalUsage != nil {
 			usage = &UsageMetadata{
@@ -1201,6 +1213,58 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		sample = sample[:500]
 	}
 	return nil, fmt.Errorf("failed to parse response. Sample: %s", sample)
+}
+
+// reasoningLabels accumulates Gemini's thinking status labels in stream order.
+// Gemini streams these on small wrb.fr frames while it thinks, repeating the
+// same label across several frames, so neighbouring duplicates are collapsed.
+//
+// This is Google's thought *summary* -- the same lines the Gemini web UI shows
+// in its Thinking block -- not a verbatim chain of thought. The wire format
+// carries no verbatim trace.
+type reasoningLabels struct {
+	labels []string
+}
+
+// add records one label, ignoring blanks and consecutive repeats.
+func (r *reasoningLabels) add(label string) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return
+	}
+	if n := len(r.labels); n > 0 && r.labels[n-1] == label {
+		return
+	}
+	r.labels = append(r.labels, label)
+}
+
+// text joins the collected labels newline-separated, as ReasoningText expects.
+func (r *reasoningLabels) text() string {
+	return strings.Join(r.labels, "\n")
+}
+
+// extractReasoningLabel reads the thinking status label carried by a decoded
+// StreamGenerate payload. During the thinking phase Gemini sends
+// payload[2] = {"7": [<empty rc_ text>, ..., ["<label>"], ...]} -- the label
+// lives at payload[2]["7"][5][0]. Frames without that shape return "".
+func extractReasoningLabel(payload []interface{}) string {
+	if len(payload) < 3 {
+		return ""
+	}
+	fields, ok := payload[2].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	parts, ok := fields["7"].([]interface{})
+	if !ok || len(parts) < 6 {
+		return ""
+	}
+	labels, ok := parts[5].([]interface{})
+	if !ok || len(labels) == 0 {
+		return ""
+	}
+	label, _ := labels[0].(string)
+	return strings.TrimSpace(label)
 }
 
 // findUsageMetadata recursively searches a decoded payload for a

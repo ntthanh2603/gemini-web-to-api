@@ -287,6 +287,16 @@ values are clamped to the nearest Gemini level (`none` and `minimal` → `low`,
 `xhigh` → `high`); anything else returns HTTP 400. The mapping is based on Gemini 3.6 Flash browser captures;
 availability of thinking levels on other models depends on Gemini Web.
 
+When Gemini thinks, the reasoning it reports is Google's thought **summary** —
+the same status lines the Gemini web UI shows in its Thinking block (for
+example, "Analyzing travel's impact on finances"). They are surfaced as
+OpenAI's `reasoning_content`, Claude's `thinking` block, and Gemini's
+`thought: true` part. Consecutive repeated lines are collapsed, and the lines
+are newline-separated. This is not the model's full chain of thought: Gemini
+Web does not send a verbatim trace over the wire, so no proxy can expose one.
+An older inline `<ctrl94>`/`<ctrl95>` trace format is still parsed as a
+fallback if it reappears.
+
 ### OpenAI SDK (Python)
 
 ```python
