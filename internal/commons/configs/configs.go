@@ -32,6 +32,10 @@ type GeminiConfig struct {
 	MaxRetries      int
 	Cookies         string
 	Temporary       bool
+	// CookieAPIKey enables the authenticated POST /admin/cookies endpoint used
+	// by browser extensions to push a fresh session. When empty the route is
+	// not registered at all.
+	CookieAPIKey string
 }
 
 type ClaudeConfig struct {
@@ -56,8 +60,8 @@ const (
 	// Rotating cookies more often than this looks automated to Google and
 	// tends to get the session flagged or blocked.
 	minGeminiRefreshInterval = 10
-	defaultGeminiMaxRetries      = 3
-	defaultLogLevel              = "info"
+	defaultGeminiMaxRetries  = 3
+	defaultLogLevel          = "info"
 )
 
 func New() (*Config, error) {
@@ -80,6 +84,7 @@ func New() (*Config, error) {
 	// Gemini
 	cfg.Gemini.Cookies = os.Getenv("GEMINI_COOKIES")
 	cfg.Gemini.AuthUser = strings.TrimSpace(os.Getenv("GEMINI_AUTH_USER"))
+	cfg.Gemini.CookieAPIKey = strings.TrimSpace(os.Getenv("GEMINI_COOKIE_API_KEY"))
 	cfg.Gemini.Secure1PSID = cookieValue(cfg.Gemini.Cookies, "__Secure-1PSID")
 	cfg.Gemini.Secure1PSIDTS = cookieValue(cfg.Gemini.Cookies, "__Secure-1PSIDTS")
 	cfg.Gemini.RefreshInterval = getEnvInt("GEMINI_REFRESH_INTERVAL", defaultGeminiRefreshInterval)

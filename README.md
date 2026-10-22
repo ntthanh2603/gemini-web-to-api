@@ -201,6 +201,7 @@ See [Music generation](docs/music.md) and the [OpenAI](examples/openai_music_cli
 | `GEMINI_REFRESH_INTERVAL` | ❌ No    | `1440`  | Cookie rotation interval in minutes (minimum `10`), see below    |
 | `GEMINI_MAX_RETRIES`      | ❌ No    | `3`     | Max retry attempts when an API call fails                        |
 | `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests                 |
+| `GEMINI_COOKIE_API_KEY`   | ❌ No    | —       | Bearer token that enables `POST /admin/cookies`, see below       |
 | `PORT`                    | ❌ No    | `4981`  | Server port                                                      |
 | `RATE_LIMIT_ENABLED`      | ❌ No    | `false` | Enable or disable rate limiting                                  |
 | `RATE_LIMIT_WINDOW_MS`    | ❌ No    | `60000` | Rate limit time window in milliseconds                           |
@@ -218,6 +219,33 @@ Google may answer with `429`, "unusual traffic" pages or force you to sign in ag
   `RATE_LIMIT_ENABLED=true` with a modest `RATE_LIMIT_MAX_REQUESTS`.
 - If the session starts expiring between rotations (logs show
   `marking client unhealthy`), lower it again or copy a fresh cookie header.
+
+### Updating cookies from a browser extension (`GEMINI_COOKIE_API_KEY`)
+
+Set `GEMINI_COOKIE_API_KEY` to a long random value to let a browser extension
+push a fresh session instead of restarting the container. When the variable is
+unset the routes are not registered at all (they answer `404`), so existing
+deployments are unaffected.
+
+```bash
+curl -X POST http://localhost:4981/admin/cookies \
+  -H "Authorization: Bearer $GEMINI_COOKIE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cookies": "SID=...; __Secure-1PSID=...; __Secure-1PSIDTS=..."}'
+```
+
+- `cookies` must be the complete Cookie request header, exactly like
+  `GEMINI_COOKIES`, and must contain both `__Secure-1PSID` and
+  `__Secure-1PSIDTS`.
+- The pushed session is verified against Google before it replaces the live one;
+  a bad header returns `4xx` and leaves the current session untouched. The
+  token is compared in constant time.
+- Pushing the `__Secure-1PSIDTS` that is already in use returns `200` with
+  `{"status":"noop"}` and does **not** contact Google, so extensions can push on
+  every cookie change.
+- `GET /admin/cookies` (same bearer token) reports a short SHA-256 fingerprint
+  of `__Secure-1PSID`, the cache age, the last update time and the update
+  source. It never returns cookie values.
 
 ### Configuration Priority
 
