@@ -83,6 +83,24 @@ func geminiThinkingLevel(effort string) string {
 	return effort
 }
 
+// cleanGeneratedText strips Gemini's image placeholders from a reply so the
+// markdown links added afterwards are the only image references.
+func cleanGeneratedText(text string) string {
+	return strings.TrimSpace(imagePlaceholderRegex.ReplaceAllString(text, ""))
+}
+
+// withImageMarkdown appends generated images to a text reply as markdown links.
+func withImageMarkdown(content string, images []providers.Image) string {
+	markdowns := make([]string, 0, len(images))
+	for _, img := range images {
+		markdowns = append(markdowns, fmt.Sprintf("![image](%s)", img.URL))
+	}
+	if content == "" {
+		return strings.Join(markdowns, "\n")
+	}
+	return content + "\n\n" + strings.Join(markdowns, "\n")
+}
+
 func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCompletionRequest) (*dto.ChatCompletionResponse, error) {
 	modelMessages := req.ToModelMessages()
 
@@ -94,6 +112,14 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	prompt := utils.BuildPromptFromMessages(modelMessages, "")
 	if prompt == "" {
 		return nil, fmt.Errorf("no valid content in messages")
+	}
+
+	// response_format is best-effort: ask for the shape in the prompt. With
+	// tools enabled the tool bridge prompt carries the rule instead, because it
+	// already owns the reply format.
+	jsonSchema, jsonMode := req.JSONResponseRequested()
+	if jsonMode && !req.HasToolsEnabled() {
+		prompt = buildJSONModePrompt(prompt, jsonSchema)
 	}
 
 	if req.HasToolsEnabled() {
@@ -117,6 +143,10 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	message := dto.ChatCompletionResponseMessage{Role: "assistant"}
 	finishReason := "stop"
 
+	// regenerate asks Gemini for the reply again; a response_format repair goes
+	// through the same path (tool bridge or plain) as the first request.
+	var regenerate func(string) (string, error)
+
 	if req.HasToolsEnabled() {
 		var toolCalls []dto.ChatCompletionToolCall
 		var content string
@@ -131,24 +161,36 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 		} else {
 			message.Content = content
 		}
+		regenerate = func(repairPrompt string) (string, error) {
+			_, _, repaired, err := s.generateToolBridge(ctx, req, repairPrompt, opts)
+			return repaired, err
+		}
 	} else {
 		response, err = s.generate(ctx, prompt, opts...)
 		if err != nil {
 			return nil, err
 		}
-		content := imagePlaceholderRegex.ReplaceAllString(response.Text, "")
-		content = strings.TrimSpace(content)
-		if len(response.Images) > 0 {
-			var imgMarkdowns []string
-			for _, img := range response.Images {
-				imgMarkdowns = append(imgMarkdowns, fmt.Sprintf("![image](%s)", img.URL))
+		message.Content = cleanGeneratedText(response.Text)
+		regenerate = func(repairPrompt string) (string, error) {
+			repaired, err := s.generate(ctx, repairPrompt, opts...)
+			if err != nil {
+				return "", err
 			}
-			if content != "" {
-				content += "\n\n"
-			}
-			content += strings.Join(imgMarkdowns, "\n")
+			return cleanGeneratedText(repaired.Text), nil
 		}
-		message.Content = content
+	}
+
+	// JSON mode applies to a text reply only: when the model called a tool, the
+	// tool bridge has already shaped the reply the client asked for.
+	if jsonMode && len(message.ToolCalls) == 0 && message.Content != "" {
+		message.Content = s.ensureJSONReply(req, prompt, message.Content, jsonSchema, regenerate)
+	}
+
+	// Markdown links after the JSON would break the shape a response_format
+	// client asked for, so images only ride along with JSON mode when there is
+	// no JSON text to corrupt.
+	if !req.HasToolsEnabled() && len(response.Images) > 0 && (!jsonMode || message.Content == "") {
+		message.Content = withImageMarkdown(message.Content, response.Images)
 	}
 
 	message.ReasoningContent = response.ReasoningText
@@ -586,6 +628,15 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	}
 	if toolChoiceMode == "none" {
 		b.WriteString("- Tool calling disabled. Return only {\"content\":\"...\"}.\n")
+	}
+	if schema, jsonMode := req.JSONResponseRequested(); jsonMode {
+		if len(schema) > 0 {
+			b.WriteString("- Write \"content\" as a single JSON value matching this JSON Schema: ")
+			b.Write(schema)
+			b.WriteString(". Set every required property.\n")
+		} else {
+			b.WriteString("- Write \"content\" as a single JSON object.\n")
+		}
 	}
 
 	b.WriteString("Available tools:\n")
