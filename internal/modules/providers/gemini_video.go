@@ -669,7 +669,6 @@ const (
 
 	maxVideoPromptBytes = 8000
 	maxRetainedVideos   = 20
-	videoJobTimeout     = 10 * time.Minute
 	videoJobRetention   = time.Hour
 )
 
@@ -741,16 +740,23 @@ type videoJobStore struct {
 	wg     sync.WaitGroup
 }
 
-func newVideoJobStore(generate VideoGenerateFunc) *videoJobStore {
+func newVideoJobStore(generate VideoGenerateFunc, timeout time.Duration) *videoJobStore {
 	root, cancel := context.WithCancel(context.Background())
-	return &videoJobStore{generate: generate, timeout: videoJobTimeout, jobs: make(map[string]*videoJobEntry), root: root, cancel: cancel}
+	if timeout <= 0 {
+		timeout = 20 * time.Minute
+	}
+	return &videoJobStore{generate: generate, timeout: timeout, jobs: make(map[string]*videoJobEntry), root: root, cancel: cancel}
 }
 
 func (c *Client) videoJobStore() *videoJobStore {
 	c.videoJobsOnce.Do(func() {
+		timeout := 20 * time.Minute
+		if c.cfg != nil && c.cfg.Gemini.VideoTimeoutMinutes > 0 {
+			timeout = time.Duration(c.cfg.Gemini.VideoTimeoutMinutes) * time.Minute
+		}
 		c.videoJobs = newVideoJobStore(func(ctx context.Context, prompt, model string, aspect VideoAspectRatio) (*VideoResult, error) {
 			return c.GenerateVideo(ctx, prompt, model, aspect, 0)
-		})
+		}, timeout)
 	})
 	return c.videoJobs
 }

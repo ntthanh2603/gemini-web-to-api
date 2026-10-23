@@ -33,6 +33,7 @@ import (
 type Client struct {
 	httpClient             *req.Client
 	cookies                *CookieStore
+	cfg                    *configs.Config
 	configuredCookieHeader string // optional full browser Cookie header for rollout/session flags
 	authUser               string // Google multi-login slot used by the Gemini Web tab (for example "2")
 	at                     string
@@ -103,6 +104,7 @@ func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
 	return &Client{
 		httpClient:             client,
 		cookies:                cookies,
+		cfg:                    cfg,
 		configuredCookieHeader: strings.TrimSpace(cfg.Gemini.Cookies),
 		authUser:               strings.TrimSpace(cfg.Gemini.AuthUser),
 		autoRefresh:            true,

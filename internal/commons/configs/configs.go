@@ -25,13 +25,14 @@ type RateLimitConfig struct {
 }
 
 type GeminiConfig struct {
-	Secure1PSID     string
-	Secure1PSIDTS   string
-	AuthUser        string
-	RefreshInterval int
-	MaxRetries      int
-	Cookies         string
-	Temporary       bool
+	Secure1PSID         string
+	Secure1PSIDTS       string
+	AuthUser            string
+	RefreshInterval     int
+	VideoTimeoutMinutes int
+	MaxRetries          int
+	Cookies             string
+	Temporary           bool
 }
 
 type ClaudeConfig struct {
@@ -51,13 +52,14 @@ type ServerConfig struct {
 }
 
 const (
-	defaultServerPort            = "4981"
-	defaultGeminiRefreshInterval = 1440
+	defaultServerPort              = "4981"
+	defaultGeminiRefreshInterval   = 1440
 	// Rotating cookies more often than this looks automated to Google and
 	// tends to get the session flagged or blocked.
-	minGeminiRefreshInterval = 10
-	defaultGeminiMaxRetries      = 3
-	defaultLogLevel              = "info"
+	minGeminiRefreshInterval       = 10
+	defaultGeminiVideoTimeoutMinutes = 20
+	defaultGeminiMaxRetries        = 3
+	defaultLogLevel                = "info"
 )
 
 func New() (*Config, error) {
@@ -87,6 +89,10 @@ func New() (*Config, error) {
 		cfg.Gemini.RefreshInterval = defaultGeminiRefreshInterval
 	} else if cfg.Gemini.RefreshInterval < minGeminiRefreshInterval {
 		cfg.Gemini.RefreshInterval = minGeminiRefreshInterval
+	}
+	cfg.Gemini.VideoTimeoutMinutes = getEnvInt("GEMINI_VIDEO_TIMEOUT_MINUTES", defaultGeminiVideoTimeoutMinutes)
+	if cfg.Gemini.VideoTimeoutMinutes < 1 {
+		cfg.Gemini.VideoTimeoutMinutes = defaultGeminiVideoTimeoutMinutes
 	}
 	cfg.Gemini.MaxRetries = getEnvInt("GEMINI_MAX_RETRIES", defaultGeminiMaxRetries)
 	cfg.Gemini.Temporary = getEnvBool("GEMINI_TEMPORARY", false)
