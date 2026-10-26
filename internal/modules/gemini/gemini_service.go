@@ -197,6 +197,30 @@ func extensionForMimeType(mimeType string) string {
 		return ".webp"
 	case "image/gif":
 		return ".gif"
+	case "application/pdf":
+		return ".pdf"
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case "application/msword":
+		return ".doc"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case "application/vnd.ms-excel":
+		return ".xls"
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return ".pptx"
+	case "application/vnd.ms-powerpoint":
+		return ".ppt"
+	case "text/plain":
+		return ".txt"
+	case "text/markdown":
+		return ".md"
+	case "text/csv":
+		return ".csv"
+	case "application/json":
+		return ".json"
+	case "application/rtf":
+		return ".rtf"
 	default:
 		return ".bin"
 	}
