@@ -68,7 +68,8 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 			for _, fc := range functionCalls {
 				resParts = append(resParts, dto.Part{FunctionCall: &fc})
 			}
-			finishReason = "FUNCTION_CALL"
+			// REST reports a tool call as a normal STOP stop, not a dedicated reason.
+			finishReason = "STOP"
 		} else {
 			resParts = append(resParts, dto.Part{Text: content})
 		}

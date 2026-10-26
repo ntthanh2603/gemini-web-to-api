@@ -62,6 +62,25 @@ type Part struct {
 	FunctionResponse *FunctionResponse `json:"function_response,omitempty"`
 }
 
+// MarshalJSON writes the part in the REST spellings, which is what official SDKs parse
+func (p Part) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Text             string            `json:"text,omitempty"`
+		Thought          bool              `json:"thought,omitempty"`
+		InlineData       *InlineData       `json:"inlineData,omitempty"`
+		FileData         *FileData         `json:"fileData,omitempty"`
+		FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
+		FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
+	}{
+		Text:             p.Text,
+		Thought:          p.Thought,
+		InlineData:       p.InlineData,
+		FileData:         p.FileData,
+		FunctionCall:     p.FunctionCall,
+		FunctionResponse: p.FunctionResponse,
+	})
+}
+
 func (p *Part) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Text                  string            `json:"text"`

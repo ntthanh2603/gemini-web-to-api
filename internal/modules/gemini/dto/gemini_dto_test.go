@@ -87,3 +87,21 @@ func TestToolMarshalsWithSnakeCase(t *testing.T) {
 		t.Errorf("expected function_declarations in output, got %s", encoded)
 	}
 }
+
+func TestPartMarshalsWithCamelCase(t *testing.T) {
+	part := Part{FunctionCall: &FunctionCall{Name: "ping", Args: json.RawMessage(`{"a":"1"}`)}}
+	encoded, err := json.Marshal(part)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := raw["functionCall"]; !ok {
+		t.Errorf("expected functionCall in output, got %s", encoded)
+	}
+	if _, ok := raw["function_call"]; ok {
+		t.Errorf("did not expect snake_case keys in output, got %s", encoded)
+	}
+}
