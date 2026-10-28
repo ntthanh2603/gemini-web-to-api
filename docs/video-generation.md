@@ -105,7 +105,7 @@ A failed job carries a code (OpenAI `error.code`; Gemini `error.status`):
 | ----------------- | -------------------- | --------------------------------------------------------------- |
 | `quota_exceeded`  | `RESOURCE_EXHAUSTED` | Gemini's video limit is reached; wait for the reset.            |
 | `refused`         | `INVALID_ARGUMENT`   | Gemini declined the prompt (see `message`).                     |
-| `timeout`         | `DEADLINE_EXCEEDED`  | Not ready within 10 minutes; it may still appear in Gemini Web. |
+| `timeout`         | `DEADLINE_EXCEEDED`  | Not ready within `GEMINI_VIDEO_TIMEOUT_MINUTES` (default 10, max 60); it may still appear in Gemini Web. |
 | `download_failed` | `INTERNAL`           | The video was generated but could not be downloaded.            |
 | `no_video`        | `INTERNAL`           | Gemini returned neither a video nor a conversation to poll.     |
 | `upstream_error`  | `INTERNAL`           | The generation request itself failed.                           |

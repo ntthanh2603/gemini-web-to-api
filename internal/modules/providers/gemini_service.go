@@ -58,16 +58,36 @@ type Client struct {
 	refreshSessionTokenFn func(ctx context.Context) error
 	// rotateFn is a test seam for Init; nil uses the real RotateCookies.
 	rotateFn func() error
+	// sessionValidator is a test seam for UpdateCookies; nil uses the real
+	// Google session check.
+	sessionValidator func(ctx context.Context, cookieHeader string) error
+
+	// sessionMu serializes the operations that replace the Gemini session
+	// (Init, the refresh loop and UpdateCookies), so none of them overwrites
+	// half of another's cookies or session state.
+	sessionMu sync.Mutex
+	// refreshOnce starts the refresh loop once, from Init or from the first
+	// cookie push after a failed Init.
+	refreshOnce sync.Once
+	// envCookieHash fingerprints GEMINI_COOKIES, so a pushed session is only
+	// reused after a restart while GEMINI_COOKIES is unchanged.
+	envCookieHash string
 
 	videoJobsOnce sync.Once
 	videoJobs     *videoJobStore
+	// videoJobTimeout bounds one video job (GEMINI_VIDEO_TIMEOUT_MINUTES);
+	// zero means defaultVideoJobTimeout.
+	videoJobTimeout time.Duration
 }
 
 type CookieStore struct {
 	Secure1PSID   string    `json:"__Secure-1PSID"`
 	Secure1PSIDTS string    `json:"__Secure-1PSIDTS"`
 	UpdatedAt     time.Time `json:"updated_at"`
-	mu            sync.RWMutex
+	// Source records where the in-use cookie set came from ("env", "rotation",
+	// "admin-api"). It carries no secret material and is safe to expose.
+	Source string `json:"source,omitempty"`
+	mu     sync.RWMutex
 }
 
 const (
@@ -85,10 +105,22 @@ var (
 )
 
 func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
+	return newClient(cfg, log, nil)
+}
+
+// NewClientWithSessionValidator builds a client whose live session check is
+// replaced by validate. Production wiring uses NewClient; tests use this to
+// exercise cookie updates without reaching Google.
+func NewClientWithSessionValidator(cfg *configs.Config, log *zap.Logger, validate func(ctx context.Context, cookieHeader string) error) *Client {
+	return newClient(cfg, log, validate)
+}
+
+func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.Context, cookieHeader string) error) *Client {
 	cookies := &CookieStore{
 		Secure1PSID:   cfg.Gemini.Secure1PSID,
 		Secure1PSIDTS: cfg.Gemini.Secure1PSIDTS,
 		UpdatedAt:     time.Now(),
+		Source:        CookieSourceEnv,
 	}
 
 	client := req.NewClient().
@@ -103,6 +135,7 @@ func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
 	return &Client{
 		httpClient:             client,
 		cookies:                cookies,
+		videoJobTimeout:        time.Duration(cfg.Gemini.VideoTimeoutMinutes) * time.Minute,
 		configuredCookieHeader: strings.TrimSpace(cfg.Gemini.Cookies),
 		authUser:               strings.TrimSpace(cfg.Gemini.AuthUser),
 		autoRefresh:            true,
@@ -111,10 +144,21 @@ func NewClient(cfg *configs.Config, log *zap.Logger) *Client {
 		maxRetries:             cfg.Gemini.MaxRetries,
 		log:                    log,
 		defaultTemporary:       cfg.Gemini.Temporary,
+		sessionValidator:       validate,
+		envCookieHash:          cookieHeaderHash(cfg.Gemini.Cookies),
 	}
 }
 
 func (c *Client) Init(ctx context.Context) error {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	// A session pushed through /admin/cookies replaces GEMINI_COOKIES until
+	// GEMINI_COOKIES itself is edited.
+	if pushed, ok := c.loadPushedSession(); ok {
+		c.usePushedSession(pushed)
+	}
+
 	// Clean cookies
 	c.cookies.Secure1PSID = cleanCookie(c.cookies.Secure1PSID)
 	configPSIDTS := cleanCookie(c.cookies.Secure1PSIDTS) // Save original config value
@@ -184,11 +228,17 @@ func (c *Client) Init(ctx context.Context) error {
 	c.log.Info("✅ Gemini client initialized successfully")
 
 	// 5. Start auto-refresh in background
-	if c.autoRefresh {
-		go c.startAutoRefresh()
-	}
+	c.ensureAutoRefresh()
 
 	return nil
+}
+
+// ensureAutoRefresh starts the refresh loop unless it is already running. A
+// failed Init does not start it, so a later cookie push does.
+func (c *Client) ensureAutoRefresh() {
+	if c.autoRefresh {
+		c.refreshOnce.Do(func() { go c.startAutoRefresh() })
+	}
 }
 
 // refreshSessionTokenCompat runs the session-token step, honoring the test
@@ -227,7 +277,10 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	psid := c.cookies.Secure1PSID
 	psidts := c.cookies.Secure1PSIDTS
 	c.cookies.mu.RUnlock()
-	cookieStr := mergeCookieHeaders(extraCookies, c.configuredCookieHeader,
+	c.mu.RLock()
+	configuredCookieHeader := c.configuredCookieHeader // replaced by UpdateCookies
+	c.mu.RUnlock()
+	cookieStr := mergeCookieHeaders(extraCookies, configuredCookieHeader,
 		fmt.Sprintf("__Secure-1PSID=%s; __Secure-1PSIDTS=%s", psid, psidts))
 
 	commonHeaders := map[string]string{
@@ -394,10 +447,17 @@ func (c *Client) startAutoRefresh() {
 		select {
 		case <-ticker.C:
 			c.log.Debug("Starting scheduled cookie refresh")
+			// A cookie push must not land between the rotation and the
+			// session refresh, or the refresh would overwrite it.
+			c.sessionMu.Lock()
 			rotateErr, sessionErr, healthy := refreshSessionHealth(
 				c.RotateCookies,
 				func() error { return c.refreshSessionToken(context.Background()) },
 			)
+			c.mu.Lock()
+			c.healthy = healthy
+			c.mu.Unlock()
+			c.sessionMu.Unlock()
 
 			if rotateErr != nil {
 				c.log.Warn("Cookie rotation failed; verified the Gemini session separately", zap.Error(rotateErr))
@@ -405,10 +465,6 @@ func (c *Client) startAutoRefresh() {
 			if sessionErr != nil {
 				c.log.Warn("Gemini session token refresh failed", zap.Error(sessionErr))
 			}
-
-			c.mu.Lock()
-			c.healthy = healthy
-			c.mu.Unlock()
 
 			if healthy {
 				c.log.Info("Gemini session refresh completed",
@@ -489,6 +545,7 @@ func (c *Client) RotateCookies() error {
 		if cookie.Name == "__Secure-1PSIDTS" {
 			c.cookies.Secure1PSIDTS = cookie.Value
 			c.cookies.UpdatedAt = time.Now()
+			c.cookies.Source = CookieSourceRotation
 			found = true
 			// Save the new cookie to cache immediately
 			_ = c.SaveCachedCookies()
@@ -514,6 +571,7 @@ func (c *Client) GetCookies() *CookieStore {
 		Secure1PSID:   c.cookies.Secure1PSID,
 		Secure1PSIDTS: c.cookies.Secure1PSIDTS,
 		UpdatedAt:     c.cookies.UpdatedAt,
+		Source:        c.cookies.Source,
 	}
 }
 
@@ -1044,6 +1102,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 	var audios []Audio
 	seenAudio := make(map[string]bool)
 	conversationID := ""
+	var labels reasoningLabels
 
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
@@ -1080,6 +1139,11 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 					continue
 				}
 				collectImages(payload, imagesByURL)
+				// Thinking models stream their thought summary as a status
+				// label on small wrb.fr frames before the answer arrives.
+				if label := extractReasoningLabel(payload); label != "" {
+					labels.add(label)
+				}
 				if um := findUsageMetadata(payload); um != nil {
 					// Later frames win: streamed responses repeat metadata,
 					// and the final frame carries the authoritative counts.
@@ -1091,8 +1155,9 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 				// Newer StreamGenerate replies (notably the Videos tool
 				// acknowledgement) stream a turn as numbered-field updates,
 				// e.g. [null,["c_...","r_..."],{"7":["text"],"44":true}],
-				// instead of the classic candidates array at index 4.
-				if len(payload) < 5 {
+				// instead of the classic candidates array at index 4. Shorter
+				// frames, with no field map at index 2, carry neither.
+				if len(payload) > 2 && len(payload) < 5 {
 					if fields, ok := payload[2].(map[string]interface{}); ok {
 						if parts, ok := fields["7"].([]interface{}); ok && len(parts) > 0 {
 							if reply, ok := parts[0].(string); ok && reply != "" {
@@ -1173,8 +1238,24 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		for _, image := range imagesByURL {
 			images = append(images, image)
 		}
-		finalResText = renderCanvasPlaceholders(finalResText, canvases)
-		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
+		// Gemini's web UI leaks citation markers and code-event fence suffixes into
+		// the response body. Strip them here, at the single text path shared by the
+		// OpenAI, Claude and Gemini-native endpoints, and from canvas documents, so
+		// a canvas reads the same inline and as a file. The reply is stripped before
+		// canvases are rendered into it, so code canvases stay verbatim in both.
+		for i := range canvases {
+			if canvases[i].Type == CanvasDocument {
+				canvases[i].Content = utils.StripCitationArtifacts(canvases[i].Content)
+			}
+		}
+		finalResText = renderCanvasPlaceholders(utils.StripCitationArtifacts(finalResText), canvases)
+		markerReasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
+		// Label frames are the modern shape; the <ctrl94>/<ctrl95> block is
+		// kept as a fallback for captures that still inline the old trace.
+		reasoning := labels.text()
+		if reasoning == "" {
+			reasoning = markerReasoning
+		}
 		var usage *UsageMetadata
 		if finalUsage != nil {
 			usage = &UsageMetadata{
@@ -1201,6 +1282,63 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		sample = sample[:500]
 	}
 	return nil, fmt.Errorf("failed to parse response. Sample: %s", sample)
+}
+
+// reasoningLabels accumulates Gemini's thinking status labels in stream order.
+// Gemini streams these on small wrb.fr frames while it thinks, repeating the
+// same label across several frames, so neighbouring duplicates are collapsed.
+//
+// This is Google's thought *summary* -- the same lines the Gemini web UI shows
+// in its Thinking block -- not a verbatim chain of thought. The wire format
+// carries no verbatim trace.
+type reasoningLabels struct {
+	labels []string
+}
+
+// add records one label, ignoring blanks and consecutive repeats.
+func (r *reasoningLabels) add(label string) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return
+	}
+	if n := len(r.labels); n > 0 && r.labels[n-1] == label {
+		return
+	}
+	r.labels = append(r.labels, label)
+}
+
+// text joins the collected labels newline-separated, as ReasoningText expects.
+func (r *reasoningLabels) text() string {
+	return strings.Join(r.labels, "\n")
+}
+
+// extractReasoningLabel reads the thinking status label carried by a decoded
+// StreamGenerate payload. During the thinking phase Gemini sends
+// payload[2] = {"7": [null, null, null, null, null, ["<label>"]], "44": true}
+// -- the label lives at payload[2]["7"][5][0], and the reply text at [0] is
+// still empty. Frames without that shape, including field-7 frames that
+// already carry reply text, return "".
+func extractReasoningLabel(payload []interface{}) string {
+	if len(payload) < 3 {
+		return ""
+	}
+	fields, ok := payload[2].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	parts, ok := fields["7"].([]interface{})
+	if !ok || len(parts) < 6 {
+		return ""
+	}
+	if reply, _ := parts[0].(string); reply != "" {
+		return ""
+	}
+	labels, ok := parts[5].([]interface{})
+	if !ok || len(labels) == 0 {
+		return ""
+	}
+	label, _ := labels[0].(string)
+	return strings.TrimSpace(label)
 }
 
 // findUsageMetadata recursively searches a decoded payload for a

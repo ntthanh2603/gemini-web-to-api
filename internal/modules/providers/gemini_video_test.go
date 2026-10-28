@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"gemini-web-to-api/internal/commons/configs"
+
 	"go.uber.org/zap"
 )
 
@@ -247,6 +249,27 @@ func waitForVideoJob(t *testing.T, c *Client, id, status string) VideoJob {
 	}
 	t.Fatalf("job %s never reached %s", id, status)
 	return VideoJob{}
+}
+
+func TestVideoJobStoreUsesConfiguredTimeout(t *testing.T) {
+	for minutes, want := range map[int]time.Duration{
+		0:  defaultVideoJobTimeout,
+		25: 25 * time.Minute,
+	} {
+		cfg := &configs.Config{}
+		cfg.Gemini.VideoTimeoutMinutes = minutes
+		c := NewClient(cfg, zap.NewNop())
+		if got := c.videoJobStore().timeout; got != want {
+			t.Errorf("VideoTimeoutMinutes=%d: job timeout = %s, want %s", minutes, got, want)
+		}
+		_ = c.Close()
+	}
+
+	test := NewVideoTestClient(nil, nil)
+	defer test.Close()
+	if got := test.videoJobStore().timeout; got != defaultVideoJobTimeout {
+		t.Errorf("NewVideoTestClient job timeout = %s, want %s", got, defaultVideoJobTimeout)
+	}
 }
 
 func TestVideoJobLifecycle(t *testing.T) {

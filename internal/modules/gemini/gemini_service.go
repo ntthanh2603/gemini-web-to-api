@@ -100,6 +100,8 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 		}
 	}
 
+	tokens := response.CountTokens(prompt)
+
 	return &dto.GeminiGenerateResponse{
 		Candidates: []dto.Candidate{
 			{
@@ -112,7 +114,9 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 			},
 		},
 		UsageMetadata: &dto.UsageMetadata{
-			TotalTokenCount: 0,
+			PromptTokenCount:     int32(tokens.PromptTokens),
+			CandidatesTokenCount: int32(tokens.CompletionTokens),
+			TotalTokenCount:      int32(tokens.TotalTokens),
 		},
 	}, nil
 }
@@ -150,7 +154,9 @@ func (s *GeminiService) buildPrompt(req dto.GeminiGenerateRequest) (string, []pr
 		}
 
 		for i, part := range content.Parts {
-			if part.Text != "" {
+			// Thought parts are the thought summary of an earlier reply; like the
+			// Gemini API, leave them out of the history sent back to the model.
+			if part.Text != "" && !part.Thought {
 				if rolePrefix != "" {
 					promptBuilder.WriteString(rolePrefix)
 					rolePrefix = ""
@@ -232,7 +238,11 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 	if err != nil {
 		return err
 	}
+	return s.streamContent(ctx, resp, onEvent)
+}
 
+// streamContent replays a finished response as streamGenerateContent chunks.
+func (s *GeminiService) streamContent(ctx context.Context, resp *dto.GeminiGenerateResponse, onEvent func(dto.GeminiGenerateResponse) bool) error {
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 		return nil
 	}
@@ -278,7 +288,8 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 		}
 	}
 
-	// Final STOP chunk carries the file parts (canvases, images) whole.
+	// Final STOP chunk carries the file parts (canvases, images) whole, and
+	// the usage, which streaming clients read from the last chunk.
 	var fileParts []dto.Part
 	for _, part := range candidate.Content.Parts {
 		if part.InlineData != nil || part.FileData != nil {
@@ -289,7 +300,7 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 	if len(fileParts) > 0 {
 		final.Content = dto.Content{Role: "model", Parts: fileParts}
 	}
-	onEvent(dto.GeminiGenerateResponse{Candidates: []dto.Candidate{final}})
+	onEvent(dto.GeminiGenerateResponse{Candidates: []dto.Candidate{final}, UsageMetadata: resp.UsageMetadata})
 
 	return nil
 }

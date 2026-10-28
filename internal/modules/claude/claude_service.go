@@ -51,15 +51,11 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 	}
 
 	// Logic: Build Prompt
-	prompt := common.BuildPromptFromMessages(req.Messages, req.System.Text)
+	prompt := s.buildPrompt(req)
 	if prompt == "" {
 		return nil, fmt.Errorf("no valid content in messages")
 	}
-
 	hasTools := len(req.Tools) > 0
-	if hasTools {
-		prompt = s.buildToolBridgePrompt(req, prompt)
-	}
 
 	opts := []providers.GenerateOption{}
 	if req.Model != "" {
@@ -102,6 +98,8 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		resContent = append(resContent, dto.ConfigContent{Type: "text", Text: response.Text})
 	}
 
+	tokens := response.CountTokens(prompt)
+
 	return &dto.MessageResponse{
 		ID:         msgID,
 		Type:       "message",
@@ -109,12 +107,25 @@ func (s *ClaudeService) GenerateMessage(ctx context.Context, req dto.MessageRequ
 		Model:      response.Model,
 		Content:    resContent,
 		StopReason: stopReason,
-		Usage: models.Usage{
-			InputTokens:  len(prompt) / 4,
-			OutputTokens: len(response.Text) / 4,
-		},
-		Canvases: providers.CanvasFiles(response.Canvases),
+		Usage:      dto.Usage{InputTokens: tokens.PromptTokens, OutputTokens: tokens.CompletionTokens},
+		Canvases:   providers.CanvasFiles(response.Canvases),
 	}, nil
+}
+
+// CountTokens estimates the input tokens of req, counted on the same prompt
+// GenerateMessage sends, so it agrees with the reported usage.input_tokens.
+func (s *ClaudeService) CountTokens(req dto.MessageRequest) int {
+	return common.EstimateTokens(s.buildPrompt(req))
+}
+
+// buildPrompt builds the prompt sent to Gemini for req, wrapped in the tool
+// bridge when req has tools. It is empty when the messages have no content.
+func (s *ClaudeService) buildPrompt(req dto.MessageRequest) string {
+	prompt := common.BuildPromptFromMessages(req.Messages, req.System.Text)
+	if prompt != "" && len(req.Tools) > 0 {
+		prompt = s.buildToolBridgePrompt(req, prompt)
+	}
+	return prompt
 }
 
 // GenerateMessageStream handles the logic of transforming a message generation into a stream of Claude events.
@@ -123,7 +134,11 @@ func (s *ClaudeService) GenerateMessageStream(ctx context.Context, req dto.Messa
 	if err != nil {
 		return err
 	}
+	return s.streamMessage(ctx, response, onEvent)
+}
 
+// streamMessage replays a finished message as Claude stream events.
+func (s *ClaudeService) streamMessage(ctx context.Context, response *dto.MessageResponse, onEvent func(dto.StreamEvent) bool) error {
 	// message_start
 	if !onEvent(dto.StreamEvent{
 		Type: "message_start",
@@ -215,12 +230,13 @@ func (s *ClaudeService) GenerateMessageStream(ctx context.Context, req dto.Messa
 		}
 	}
 
-	// message_delta
+	// message_delta carries the final usage, as Anthropic streams do.
 	if !onEvent(dto.StreamEvent{
 		Type: "message_delta",
 		DeltaField: &models.Delta{
 			StopReason: response.StopReason,
 		},
+		UsageField: &response.Usage,
 	}) {
 		return nil
 	}

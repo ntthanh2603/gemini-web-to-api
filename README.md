@@ -182,11 +182,29 @@ Your Gemini Web To API is running at `http://localhost:4981` 🎉
 - 🎬 **Video Generation**: Text-to-video (16:9 or 9:16 MP4) via Gemini Web's Videos tool, usable from the OpenAI (`client.videos`) and Google GenAI (`generate_videos`) SDKs
 - 🧾 **Canvas**: Gemini Canvas code files and documents via any chat API — just use a `-canvas` model (e.g. `gemini-auto-canvas`)
 - 🎵 **Music Generation**: Gemini Web's music tool through `client.audio.speech` (OpenAI) and `-music` models (Gemini)
+- 🔢 **Token usage estimates**: Chat endpoints report plausible `usage` counts, streaming included, even though Gemini Web usually sends none — see [Token usage reporting](#token-usage-reporting)
+- 🧹 **Clean Output**: Web-UI citation artifacts (`[cite: N]`, `[cite: N, M]`, `[cite_start]` and `?code_reference` / `?code_stdout` code-fence suffixes) are stripped from response text on every endpoint
+- 🧱 **JSON Responses**: OpenAI `response_format` (`json_object` / `json_schema`) is asked for in the prompt, fenced or prose-wrapped replies are cleaned, and one repair attempt is made before falling back to the raw text
 
 See [Image generation and image inputs](docs/image-generation.md) for tested examples, limitations and security guidance.
 See [Video generation](docs/video-generation.md) for the video APIs and the [OpenAI](examples/openai_video_client.py) / [Gemini](examples/gemini_video_client.py) SDK examples.
 See [Canvas](docs/canvas.md) and the [OpenAI](examples/openai_canvas_client.py) / [Gemini](examples/gemini_canvas_client.py) / [Claude](examples/claude_canvas_client.py) SDK examples for canvas mode.
 See [Music generation](docs/music.md) and the [OpenAI](examples/openai_music_client.py) / [Gemini](examples/gemini_music_client.py) SDK examples.
+
+### Token usage reporting
+
+Gemini Web's wire format usually carries no token counts, so the chat endpoints
+report **estimates**: `usage` on OpenAI and Claude, `usageMetadata` on Gemini.
+They come from a rune-based, per-script heuristic and are meant for context
+tracking and relative load monitoring — they are **not billing-grade**. Output
+counts include reasoning text. When a response does carry `usageMetadata`, its
+counts are used instead, and any count it leaves out falls back to the estimate.
+
+- **OpenAI**: streams end with a usage chunk when the request sets `stream_options: {"include_usage": true}`.
+- **Claude**: streams carry usage in `message_start` and `message_delta`; `/messages/count_tokens` uses the same estimate as `usage.input_tokens`.
+- **Gemini**: the last `streamGenerateContent` chunk carries `usageMetadata`.
+
+Image, video and music generation report no token counts.
 
 ---
 
@@ -201,6 +219,8 @@ See [Music generation](docs/music.md) and the [OpenAI](examples/openai_music_cli
 | `GEMINI_REFRESH_INTERVAL` | ❌ No    | `1440`  | Cookie rotation interval in minutes (minimum `10`), see below    |
 | `GEMINI_MAX_RETRIES`      | ❌ No    | `3`     | Max retry attempts when an API call fails                        |
 | `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests                 |
+| `GEMINI_VIDEO_TIMEOUT_MINUTES` | ❌ No | `10` | Minutes a video job may take (maximum `60`); only one video job runs at a time |
+| `GEMINI_COOKIE_API_KEY`   | ❌ No    | —       | Bearer token that enables `POST /admin/cookies`, see below       |
 | `PORT`                    | ❌ No    | `4981`  | Server port                                                      |
 | `RATE_LIMIT_ENABLED`      | ❌ No    | `false` | Enable or disable rate limiting                                  |
 | `RATE_LIMIT_WINDOW_MS`    | ❌ No    | `60000` | Rate limit time window in milliseconds                           |
@@ -218,6 +238,37 @@ Google may answer with `429`, "unusual traffic" pages or force you to sign in ag
   `RATE_LIMIT_ENABLED=true` with a modest `RATE_LIMIT_MAX_REQUESTS`.
 - If the session starts expiring between rotations (logs show
   `marking client unhealthy`), lower it again or copy a fresh cookie header.
+
+### Updating cookies from a browser extension (`GEMINI_COOKIE_API_KEY`)
+
+Set `GEMINI_COOKIE_API_KEY` to a long random value to let a browser extension
+push a fresh session instead of restarting the container. When the variable is
+unset the routes are not registered at all (they answer `404`), so existing
+deployments are unaffected.
+
+```bash
+curl -X POST http://localhost:4981/admin/cookies \
+  -H "Authorization: Bearer $GEMINI_COOKIE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cookies": "SID=...; __Secure-1PSID=...; __Secure-1PSIDTS=..."}'
+```
+
+- `cookies` must be the complete Cookie request header, exactly like
+  `GEMINI_COOKIES`, and must contain both `__Secure-1PSID` and
+  `__Secure-1PSIDTS`.
+- The pushed session is verified against Google before it replaces the live one;
+  a bad header returns `4xx` and leaves the current session untouched. The
+  token is compared in constant time.
+- Pushing the `__Secure-1PSIDTS` of a healthy live session returns `200` with
+  `{"status":"noop"}` and does **not** contact Google, so extensions can push on
+  every cookie change. If the session is unhealthy, the push is verified again,
+  so re-pushing can recover it.
+- The pushed header replaces `GEMINI_COOKIES` for later session refreshes and is
+  saved to `.cookies/pushed-session.json`, so it survives a restart. Editing
+  `GEMINI_COOKIES` afterwards makes the server use the edited value instead.
+- `GET /admin/cookies` (same bearer token) reports a short SHA-256 fingerprint
+  of `__Secure-1PSID`, the cache age, the last update time and the update
+  source. It never returns cookie values.
 
 ### Configuration Priority
 
@@ -286,6 +337,56 @@ Omitting this field preserves the existing low setting. The other OpenAI
 values are clamped to the nearest Gemini level (`none` and `minimal` → `low`,
 `xhigh` → `high`); anything else returns HTTP 400. The mapping is based on Gemini 3.6 Flash browser captures;
 availability of thinking levels on other models depends on Gemini Web.
+
+When Gemini thinks, the reasoning it reports is Google's thought **summary** —
+the same status lines the Gemini web UI shows in its Thinking block (for
+example, "Analyzing travel's impact on finances"). They are surfaced as
+OpenAI's `reasoning_content`, Claude's `thinking` block, and Gemini's
+`thought: true` part. Consecutive repeated lines are collapsed, and the lines
+are newline-separated. This is not the model's full chain of thought: Gemini
+Web does not send a verbatim trace over the wire, so no proxy can expose one.
+An older inline `<ctrl94>`/`<ctrl95>` trace format is still parsed as a
+fallback if it reappears.
+
+### JSON responses (`response_format`, OpenAI-compatible chat)
+
+`POST /openai/v1/chat/completions` accepts OpenAI's `response_format`, for both
+streaming and non-streaming requests:
+
+```json
+{
+  "model": "gemini-3.6-flash",
+  "messages": [{"role": "user", "content": "Invent a person."}],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "person",
+      "schema": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+        "required": ["name", "age"]
+      }
+    }
+  }
+}
+```
+
+Gemini Web has no JSON mode, so this is best-effort:
+
+- The prompt asks for JSON only, with no code fences and no text around it.
+- A `json` markdown code fence and any prose around the JSON are stripped before
+  the reply is checked: `json_object` needs valid JSON that parses to an object,
+  `json_schema` also needs the requested top-level type and every required key
+  (deeper schema checks are not enforced). A reply that is broken as a whole is
+  never answered with one of the objects nested inside it.
+- A reply that does not match is sent back to Gemini **once** for a repair. That
+  is a second request on your Google account, so it never loops, with or without
+  tools: if the repair is still invalid, the raw reply is returned and a warning
+  is logged.
+- `{"type": "text"}` (the default) and unknown types are ignored. With tools, a
+  reply without a tool call carries its JSON in the bridge's `content`; when the
+  model calls a tool, the tool call is returned unchanged and JSON mode is
+  skipped, so a tool call is never re-asked for JSON.
 
 ### OpenAI SDK (Python)
 

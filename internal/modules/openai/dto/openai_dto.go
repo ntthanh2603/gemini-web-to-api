@@ -195,6 +195,30 @@ type ToolChoiceObject struct {
 	Function ToolChoiceFunction `json:"function,omitempty"`
 }
 
+// ResponseFormat mirrors OpenAI's response_format object. Type "text" (or a
+// missing response_format) is a no-op; "json_object" and "json_schema" ask for
+// a JSON reply, which this bridge asks for in the prompt and validates
+// afterwards, best-effort.
+type ResponseFormat struct {
+	Type       string          `json:"type"`
+	JSONSchema json.RawMessage `json:"json_schema,omitempty" swagignore:"true"` // @SchemaType object
+}
+
+// SchemaDocument returns the JSON Schema carried by json_schema. OpenAI nests it
+// under "schema"; a block that already is the schema is read as-is.
+func (f ResponseFormat) SchemaDocument() json.RawMessage {
+	if len(f.JSONSchema) == 0 || string(f.JSONSchema) == "null" {
+		return nil
+	}
+	var wrapper struct {
+		Schema json.RawMessage `json:"schema"`
+	}
+	if err := json.Unmarshal(f.JSONSchema, &wrapper); err == nil && len(wrapper.Schema) > 0 && string(wrapper.Schema) != "null" {
+		return wrapper.Schema
+	}
+	return f.JSONSchema
+}
+
 // ChatCompletionRequest represents OpenAI chat completion request
 type ChatCompletionRequest struct {
 	Model           string                  `json:"model"`
@@ -202,9 +226,35 @@ type ChatCompletionRequest struct {
 	Tools           []ToolDefinition        `json:"tools,omitempty"`
 	ToolChoiceRaw   json.RawMessage         `json:"tool_choice,omitempty" swagignore:"true"` // @SchemaType object
 	Stream          bool                    `json:"stream,omitempty"`
+	StreamOptions   *StreamOptions          `json:"stream_options,omitempty"`
 	Temperature     float32                 `json:"temperature,omitempty"`
 	MaxTokens       int                     `json:"max_tokens,omitempty"`
 	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
+	ResponseFormat  *ResponseFormat         `json:"response_format,omitempty"`
+}
+
+// JSONResponseRequested reports whether the client asked for a JSON reply and
+// returns the requested JSON Schema (nil for json_object). Only the types
+// "json_object" and "json_schema" switch JSON mode on: "text", unknown types
+// and a missing field stay no-ops so clients that send them keep working.
+func (r ChatCompletionRequest) JSONResponseRequested() (json.RawMessage, bool) {
+	if r.ResponseFormat == nil {
+		return nil, false
+	}
+	switch strings.ToLower(strings.TrimSpace(r.ResponseFormat.Type)) {
+	case "json_object":
+		return nil, true
+	case "json_schema":
+		return r.ResponseFormat.SchemaDocument(), true
+	default:
+		return nil, false
+	}
+}
+
+// StreamOptions represents OpenAI stream_options
+type StreamOptions struct {
+	// IncludeUsage adds a final chunk carrying the usage for the request.
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 func (r ChatCompletionRequest) ToModelMessages() []models.Message {
@@ -335,6 +385,8 @@ type ChatCompletionChunk struct {
 	Created int64         `json:"created"`
 	Model   string        `json:"model"`
 	Choices []ChunkChoice `json:"choices"`
+	// Usage is set only on the final chunk sent for stream_options.include_usage.
+	Usage *models.Usage `json:"usage,omitempty"`
 }
 
 // ChunkChoice represents a choice in a chunk

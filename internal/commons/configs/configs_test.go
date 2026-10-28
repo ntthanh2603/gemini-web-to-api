@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+func TestNewVideoTimeoutMinutes(t *testing.T) {
+	for value, want := range map[string]int{
+		"":    defaultGeminiVideoTimeoutMinutes,
+		"30":  30,
+		"0":   defaultGeminiVideoTimeoutMinutes,
+		"-5":  defaultGeminiVideoTimeoutMinutes,
+		"abc": defaultGeminiVideoTimeoutMinutes,
+		"60":  60,
+		"500": maxGeminiVideoTimeoutMinutes,
+	} {
+		t.Run("value="+value, func(t *testing.T) {
+			t.Setenv("GEMINI_COOKIES", "__Secure-1PSID=psid; __Secure-1PSIDTS=psidts")
+			t.Setenv("GEMINI_VIDEO_TIMEOUT_MINUTES", value)
+			cfg, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Gemini.VideoTimeoutMinutes != want {
+				t.Fatalf("VideoTimeoutMinutes = %d, want %d", cfg.Gemini.VideoTimeoutMinutes, want)
+			}
+		})
+	}
+}
+
 func TestCookieValueExtractsAuthFromFullHeader(t *testing.T) {
 	header := "NID=rollout; __Secure-1PSID=account=value; __Secure-1PSIDTS=timestamp; SIDCC=flags"
 	if got := cookieValue(header, "__Secure-1PSID"); got != "account=value" {
