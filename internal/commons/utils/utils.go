@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"gemini-web-to-api/internal/commons/models"
 
@@ -28,6 +29,42 @@ var (
 	// and its language tag are kept.
 	codeFenceArtifactRe = regexp.MustCompile("^([ 	]*```[^\\s?]*)\\?(?:code_reference|code_stdout)(?:&[A-Za-z0-9_.=&%~-]*)?[ 	\r]*$")
 )
+
+// EstimateTokens approximates a SentencePiece token count for text when the
+// upstream wire carries no usage metadata. It is rune-based with per-script
+// weighting: CJK runes (Han, Hiragana, Katakana, Hangul) count ~1 token each,
+// every other rune counts ~1/4 token. It replaces the old len(bytes)/4
+// heuristic, which overcounts multi-byte Latin scripts such as Vietnamese and
+// undercounts CJK (3 bytes, but about one token, per rune).
+//
+// Endpoints get their counts through providers.Response.CountTokens, which
+// prefers real usageMetadata from the wire over this heuristic.
+//
+// Estimates are not billing-grade; they exist so clients that track context
+// or cost get a plausible signal instead of zeros.
+func EstimateTokens(text string) int {
+	var cjk, other int
+	for _, r := range text {
+		if isCJKRune(r) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return cjk + (other+3)/4
+}
+
+// isCJKRune reports whether r belongs to a script that SentencePiece-style
+// tokenizers emit at roughly one token per character.
+func isCJKRune(r rune) bool {
+	if r < 0x1100 { // below Hangul Jamo, the first block of these scripts
+		return false
+	}
+	return unicode.Is(unicode.Han, r) ||
+		unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) ||
+		unicode.Is(unicode.Hangul, r)
+}
 
 // BuildPromptFromMessages constructs a unified prompt from messages
 func BuildPromptFromMessages(messages []models.Message, systemPrompt string) string {

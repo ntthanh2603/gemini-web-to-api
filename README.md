@@ -182,12 +182,28 @@ Your Gemini Web To API is running at `http://localhost:4981` 🎉
 - 🎬 **Video Generation**: Text-to-video (16:9 or 9:16 MP4) via Gemini Web's Videos tool, usable from the OpenAI (`client.videos`) and Google GenAI (`generate_videos`) SDKs
 - 🧾 **Canvas**: Gemini Canvas code files and documents via any chat API — just use a `-canvas` model (e.g. `gemini-auto-canvas`)
 - 🎵 **Music Generation**: Gemini Web's music tool through `client.audio.speech` (OpenAI) and `-music` models (Gemini)
+- 🔢 **Token usage estimates**: Chat endpoints report plausible `usage` counts, streaming included, even though Gemini Web usually sends none — see [Token usage reporting](#token-usage-reporting)
 - 🧹 **Clean Output**: Web-UI citation artifacts (`[cite: N]`, `[cite: N, M]`, `[cite_start]` and `?code_reference` / `?code_stdout` code-fence suffixes) are stripped from response text on every endpoint
 
 See [Image generation and image inputs](docs/image-generation.md) for tested examples, limitations and security guidance.
 See [Video generation](docs/video-generation.md) for the video APIs and the [OpenAI](examples/openai_video_client.py) / [Gemini](examples/gemini_video_client.py) SDK examples.
 See [Canvas](docs/canvas.md) and the [OpenAI](examples/openai_canvas_client.py) / [Gemini](examples/gemini_canvas_client.py) / [Claude](examples/claude_canvas_client.py) SDK examples for canvas mode.
 See [Music generation](docs/music.md) and the [OpenAI](examples/openai_music_client.py) / [Gemini](examples/gemini_music_client.py) SDK examples.
+
+### Token usage reporting
+
+Gemini Web's wire format usually carries no token counts, so the chat endpoints
+report **estimates**: `usage` on OpenAI and Claude, `usageMetadata` on Gemini.
+They come from a rune-based, per-script heuristic and are meant for context
+tracking and relative load monitoring — they are **not billing-grade**. Output
+counts include reasoning text. When a response does carry `usageMetadata`, its
+counts are used instead, and any count it leaves out falls back to the estimate.
+
+- **OpenAI**: streams end with a usage chunk when the request sets `stream_options: {"include_usage": true}`.
+- **Claude**: streams carry usage in `message_start` and `message_delta`; `/messages/count_tokens` uses the same estimate as `usage.input_tokens`.
+- **Gemini**: the last `streamGenerateContent` chunk carries `usageMetadata`.
+
+Image, video and music generation report no token counts.
 
 ---
 
