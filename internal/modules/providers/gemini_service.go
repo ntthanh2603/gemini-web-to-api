@@ -1173,12 +1173,18 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		for _, image := range imagesByURL {
 			images = append(images, image)
 		}
-		finalResText = renderCanvasPlaceholders(finalResText, canvases)
-		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
 		// Gemini's web UI leaks citation markers and code-event fence suffixes into
 		// the response body. Strip them here, at the single text path shared by the
-		// OpenAI, Claude and Gemini-native endpoints.
-		cleanText = utils.StripCitationArtifacts(cleanText)
+		// OpenAI, Claude and Gemini-native endpoints, and from canvas documents, so
+		// a canvas reads the same inline and as a file. The reply is stripped before
+		// canvases are rendered into it, so code canvases stay verbatim in both.
+		for i := range canvases {
+			if canvases[i].Type == CanvasDocument {
+				canvases[i].Content = utils.StripCitationArtifacts(canvases[i].Content)
+			}
+		}
+		finalResText = renderCanvasPlaceholders(utils.StripCitationArtifacts(finalResText), canvases)
+		reasoning, cleanText := utils.ExtractThinkingAndText(finalResText)
 		var usage *UsageMetadata
 		if finalUsage != nil {
 			usage = &UsageMetadata{

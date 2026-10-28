@@ -243,6 +243,36 @@ func TestParseResponseStripsCitationArtifacts(t *testing.T) {
 	}
 }
 
+// TestParseResponseStripsCitationsFromCanvasDocuments keeps a canvas the same
+// inline and as a file: documents lose their markers, code stays verbatim.
+func TestParseResponseStripsCitationsFromCanvasDocuments(t *testing.T) {
+	const code = `const note = "Hello [cite: 1]";`
+	doc := canvasTestEntry(false)
+	doc[4] = "Coffee [cite_start]**really** is great [cite: 1]."
+	codeEntry := canvasTestEntry(true)
+	codeEntry[4] = code
+	text := "Here [cite: 2]:\n\nhttp://googleusercontent.com/immersive_entry_chip/0\n\nhttp://googleusercontent.com/immersive_entry_chip/1"
+	payload := []interface{}{nil, "conversation-id", nil, nil, []interface{}{canvasTestCandidate(text, doc, codeEntry)}}
+
+	resp, err := (&Client{log: zap.NewNop()}).parseResponse(buildWireLine(t, payload))
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if len(resp.Canvases) != 2 {
+		t.Fatalf("canvases = %#v", resp.Canvases)
+	}
+	if got := resp.Canvases[0].Content; got != "Coffee **really** is great." {
+		t.Fatalf("document canvas = %q", got)
+	}
+	if got := resp.Canvases[1].Content; got != code {
+		t.Fatalf("code canvas = %q, want it verbatim", got)
+	}
+	want := "Here:\n\nCoffee **really** is great.\n\n```html\n" + code + "\n```"
+	if resp.Text != want {
+		t.Fatalf("text = %q, want %q", resp.Text, want)
+	}
+}
+
 const testPSID = "test-psid"
 
 func writeCookieCache(t *testing.T, psid, ts string) string {

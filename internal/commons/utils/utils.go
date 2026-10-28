@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"gemini-web-to-api/internal/commons/models"
 
@@ -384,9 +385,9 @@ func StripCitationArtifacts(text string) string {
 }
 
 // removeInlineMarkers deletes every match of re from text. When a marker sits
-// between words it is simply cut out; when it sits before punctuation or at the
-// end of a line, one preceding space is removed too so no "word ." or trailing
-// space is left behind.
+// between words it is simply cut out; when what follows it closes the phrase
+// (see closesPhrase), one preceding space is removed too so no "word ." or
+// trailing space is left behind.
 func removeInlineMarkers(text string, re *regexp.Regexp) string {
 	matches := re.FindAllStringIndex(text, -1)
 	if len(matches) == 0 {
@@ -397,15 +398,7 @@ func removeInlineMarkers(text string, re *regexp.Regexp) string {
 	last := 0
 	for _, m := range matches {
 		start, end := m[0], m[1]
-		gluedToWord := false
-		if end < len(text) {
-			next := text[end]
-			gluedToWord = next >= 0x80 ||
-				(next >= 'a' && next <= 'z') ||
-				(next >= 'A' && next <= 'Z') ||
-				(next >= '0' && next <= '9')
-		}
-		if !gluedToWord && start > last && text[start-1] == ' ' {
+		if start > last && text[start-1] == ' ' && closesPhrase(text[end:]) {
 			start--
 		}
 		b.WriteString(text[last:start])
@@ -413,6 +406,32 @@ func removeInlineMarkers(text string, re *regexp.Regexp) string {
 	}
 	b.WriteString(text[last:])
 	return b.String()
+}
+
+// closingPunctuation lists sentence and clause punctuation, ASCII and CJK,
+// that attaches to the word before it.
+const closingPunctuation = ".,;:!?…。、，．；：！？"
+
+// closesPhrase reports whether rest, the text right after a removed marker,
+// attaches to the word before the marker: the end of the text, whitespace,
+// closing punctuation, or a closing run of markdown delimiters or quotes as in
+// "**claim [cite: 1]**.". Anything else starts a new phrase whose leading space
+// must stay, such as the bold label in "* [cite_start]**Label:** text".
+func closesPhrase(rest string) bool {
+	if rest == "" {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	switch {
+	case unicode.IsSpace(r), strings.ContainsRune(closingPunctuation, r):
+		return true
+	case unicode.Is(unicode.Pe, r), unicode.Is(unicode.Pf, r): // ) ] } 」 ” ...
+		return true
+	case strings.ContainsRune("*_~`\"'", r):
+		// A delimiter run closes when no word follows it.
+		return closesPhrase(strings.TrimLeft(rest, string(r)))
+	}
+	return false
 }
 
 // ExtractThinkingAndText separates the thinking process and final text from the raw string.

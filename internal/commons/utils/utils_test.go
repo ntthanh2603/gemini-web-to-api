@@ -255,6 +255,26 @@ func TestStripCitationArtifacts(t *testing.T) {
 			input: "",
 			want:  "",
 		},
+		{
+			name:  "Bold label after cite_start keeps its bullet",
+			input: "* [cite_start]**Point one:** detail [cite: 1]\n* [cite_start]**Point two:** more [cite: 2, 3]",
+			want:  "* **Point one:** detail\n* **Point two:** more",
+		},
+		{
+			name:  "Opening bracket, link and quote after cite_start keep their space",
+			input: "Water boils [cite_start](at sea level) [cite: 4]. See [cite_start][the docs](https://x.y). He said [cite_start]\"hello\" [cite: 5].",
+			want:  "Water boils (at sea level). See [the docs](https://x.y). He said \"hello\".",
+		},
+		{
+			name:  "Marker before closing bold",
+			input: "**Bold claim [cite: 1]**.",
+			want:  "**Bold claim**.",
+		},
+		{
+			name:  "Marker before CJK punctuation",
+			input: "中文句子 [cite: 1]。下一句 [cite: 2]！",
+			want:  "中文句子。下一句！",
+		},
 	}
 
 	for _, tt := range tests {
