@@ -202,9 +202,16 @@ type ChatCompletionRequest struct {
 	Tools           []ToolDefinition        `json:"tools,omitempty"`
 	ToolChoiceRaw   json.RawMessage         `json:"tool_choice,omitempty" swagignore:"true"` // @SchemaType object
 	Stream          bool                    `json:"stream,omitempty"`
+	StreamOptions   *StreamOptions          `json:"stream_options,omitempty"`
 	Temperature     float32                 `json:"temperature,omitempty"`
 	MaxTokens       int                     `json:"max_tokens,omitempty"`
 	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
+}
+
+// StreamOptions represents OpenAI stream_options
+type StreamOptions struct {
+	// IncludeUsage adds a final chunk carrying the usage for the request.
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 func (r ChatCompletionRequest) ToModelMessages() []models.Message {
@@ -335,6 +342,8 @@ type ChatCompletionChunk struct {
 	Created int64         `json:"created"`
 	Model   string        `json:"model"`
 	Choices []ChunkChoice `json:"choices"`
+	// Usage is set only on the final chunk sent for stream_options.include_usage.
+	Usage *models.Usage `json:"usage,omitempty"`
 }
 
 // ChunkChoice represents a choice in a chunk

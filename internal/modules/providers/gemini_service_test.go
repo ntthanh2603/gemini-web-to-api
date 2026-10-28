@@ -210,6 +210,69 @@ func TestParseResponseWithoutUsageMetadataLeavesItNil(t *testing.T) {
 	}
 }
 
+// TestParseResponseStripsCitationArtifacts proves the sanitize step is wired into
+// the provider's shared text path, so every endpoint served from Response.Text
+// gets clean output.
+func TestParseResponseStripsCitationArtifacts(t *testing.T) {
+	const raw = "Here is the total [cite: 3, 7]:\n\n" +
+		"```python?code_reference&code_event_index=1\nprint(2 + 2)\n\n```\n\n" +
+		"```text?code_stdout&code_event_index=1\n4\n```\n\n" +
+		"That is all [cite_start]done."
+	const want = "Here is the total:\n\n" +
+		"```python\nprint(2 + 2)\n\n```\n\n" +
+		"```text\n4\n```\n\n" +
+		"That is all done."
+
+	payload := []interface{}{
+		nil,
+		"conversation-id",
+		nil,
+		nil,
+		[]interface{}{
+			[]interface{}{"response-id", []interface{}{raw}},
+		},
+	}
+
+	client := &Client{log: zap.NewNop()}
+	resp, err := client.parseResponse(buildWireLine(t, payload))
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if resp.Text != want {
+		t.Fatalf("text = %q, want %q", resp.Text, want)
+	}
+}
+
+// TestParseResponseStripsCitationsFromCanvasDocuments keeps a canvas the same
+// inline and as a file: documents lose their markers, code stays verbatim.
+func TestParseResponseStripsCitationsFromCanvasDocuments(t *testing.T) {
+	const code = `const note = "Hello [cite: 1]";`
+	doc := canvasTestEntry(false)
+	doc[4] = "Coffee [cite_start]**really** is great [cite: 1]."
+	codeEntry := canvasTestEntry(true)
+	codeEntry[4] = code
+	text := "Here [cite: 2]:\n\nhttp://googleusercontent.com/immersive_entry_chip/0\n\nhttp://googleusercontent.com/immersive_entry_chip/1"
+	payload := []interface{}{nil, "conversation-id", nil, nil, []interface{}{canvasTestCandidate(text, doc, codeEntry)}}
+
+	resp, err := (&Client{log: zap.NewNop()}).parseResponse(buildWireLine(t, payload))
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if len(resp.Canvases) != 2 {
+		t.Fatalf("canvases = %#v", resp.Canvases)
+	}
+	if got := resp.Canvases[0].Content; got != "Coffee **really** is great." {
+		t.Fatalf("document canvas = %q", got)
+	}
+	if got := resp.Canvases[1].Content; got != code {
+		t.Fatalf("code canvas = %q, want it verbatim", got)
+	}
+	want := "Here:\n\nCoffee **really** is great.\n\n```html\n" + code + "\n```"
+	if resp.Text != want {
+		t.Fatalf("text = %q, want %q", resp.Text, want)
+	}
+}
+
 const testPSID = "test-psid"
 
 func writeCookieCache(t *testing.T, psid, ts string) string {
