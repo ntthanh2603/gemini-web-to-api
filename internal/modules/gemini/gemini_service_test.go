@@ -41,6 +41,26 @@ func TestGeminiBuildPrompt(t *testing.T) {
 		}
 	})
 
+	t.Run("thought parts in history are not sent back", func(t *testing.T) {
+		req := dto.GeminiGenerateRequest{
+			Contents: []dto.Content{
+				{Role: "user", Parts: []dto.Part{{Text: "Which box?"}}},
+				{Role: "model", Parts: []dto.Part{
+					{Text: "Solving a classic puzzle's relabeling", Thought: true},
+					{Text: "The mixed one."},
+				}},
+				{Role: "user", Parts: []dto.Part{{Text: "Why?"}}},
+			},
+		}
+		prompt, _, err := service.buildPrompt(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "User: Which box?\nModel: The mixed one.\nUser: Why?"; prompt != want {
+			t.Errorf("got %q, want %q", prompt, want)
+		}
+	})
+
 	t.Run("multi-turn conversation with roles", func(t *testing.T) {
 		req := dto.GeminiGenerateRequest{
 			Contents: []dto.Content{
