@@ -62,6 +62,17 @@ type Client struct {
 	// Google session check.
 	sessionValidator func(ctx context.Context, cookieHeader string) error
 
+	// sessionMu serializes the operations that replace the Gemini session
+	// (Init, the refresh loop and UpdateCookies), so none of them overwrites
+	// half of another's cookies or session state.
+	sessionMu sync.Mutex
+	// refreshOnce starts the refresh loop once, from Init or from the first
+	// cookie push after a failed Init.
+	refreshOnce sync.Once
+	// envCookieHash fingerprints GEMINI_COOKIES, so a pushed session is only
+	// reused after a restart while GEMINI_COOKIES is unchanged.
+	envCookieHash string
+
 	videoJobsOnce sync.Once
 	videoJobs     *videoJobStore
 }
@@ -130,10 +141,20 @@ func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.C
 		log:                    log,
 		defaultTemporary:       cfg.Gemini.Temporary,
 		sessionValidator:       validate,
+		envCookieHash:          cookieHeaderHash(cfg.Gemini.Cookies),
 	}
 }
 
 func (c *Client) Init(ctx context.Context) error {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+
+	// A session pushed through /admin/cookies replaces GEMINI_COOKIES until
+	// GEMINI_COOKIES itself is edited.
+	if pushed, ok := c.loadPushedSession(); ok {
+		c.usePushedSession(pushed)
+	}
+
 	// Clean cookies
 	c.cookies.Secure1PSID = cleanCookie(c.cookies.Secure1PSID)
 	configPSIDTS := cleanCookie(c.cookies.Secure1PSIDTS) // Save original config value
@@ -203,11 +224,17 @@ func (c *Client) Init(ctx context.Context) error {
 	c.log.Info("✅ Gemini client initialized successfully")
 
 	// 5. Start auto-refresh in background
-	if c.autoRefresh {
-		go c.startAutoRefresh()
-	}
+	c.ensureAutoRefresh()
 
 	return nil
+}
+
+// ensureAutoRefresh starts the refresh loop unless it is already running. A
+// failed Init does not start it, so a later cookie push does.
+func (c *Client) ensureAutoRefresh() {
+	if c.autoRefresh {
+		c.refreshOnce.Do(func() { go c.startAutoRefresh() })
+	}
 }
 
 // refreshSessionTokenCompat runs the session-token step, honoring the test
@@ -246,7 +273,10 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	psid := c.cookies.Secure1PSID
 	psidts := c.cookies.Secure1PSIDTS
 	c.cookies.mu.RUnlock()
-	cookieStr := mergeCookieHeaders(extraCookies, c.configuredCookieHeader,
+	c.mu.RLock()
+	configuredCookieHeader := c.configuredCookieHeader // replaced by UpdateCookies
+	c.mu.RUnlock()
+	cookieStr := mergeCookieHeaders(extraCookies, configuredCookieHeader,
 		fmt.Sprintf("__Secure-1PSID=%s; __Secure-1PSIDTS=%s", psid, psidts))
 
 	commonHeaders := map[string]string{
@@ -413,10 +443,17 @@ func (c *Client) startAutoRefresh() {
 		select {
 		case <-ticker.C:
 			c.log.Debug("Starting scheduled cookie refresh")
+			// A cookie push must not land between the rotation and the
+			// session refresh, or the refresh would overwrite it.
+			c.sessionMu.Lock()
 			rotateErr, sessionErr, healthy := refreshSessionHealth(
 				c.RotateCookies,
 				func() error { return c.refreshSessionToken(context.Background()) },
 			)
+			c.mu.Lock()
+			c.healthy = healthy
+			c.mu.Unlock()
+			c.sessionMu.Unlock()
 
 			if rotateErr != nil {
 				c.log.Warn("Cookie rotation failed; verified the Gemini session separately", zap.Error(rotateErr))
@@ -424,10 +461,6 @@ func (c *Client) startAutoRefresh() {
 			if sessionErr != nil {
 				c.log.Warn("Gemini session token refresh failed", zap.Error(sessionErr))
 			}
-
-			c.mu.Lock()
-			c.healthy = healthy
-			c.mu.Unlock()
 
 			if healthy {
 				c.log.Info("Gemini session refresh completed",

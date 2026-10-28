@@ -213,18 +213,25 @@ func TestAdminRejectsMissingRequiredCookiesAndKeepsSession(t *testing.T) {
 func TestAdminSamePSIDTSIsNoopWithoutGoogleCall(t *testing.T) {
 	h := newHarness(t, testAPIKey, nil)
 
+	// A first push makes the session live and healthy (one session check).
+	const newTS = "pushed-ts-value"
+	if status, body := h.do(t, http.MethodPost, adminPath,
+		updateBody("NID=extra; __Secure-1PSID="+testPSID+"; __Secure-1PSIDTS="+newTS), true); status != http.StatusOK {
+		t.Fatalf("first push: status = %d, want 200 (body %s)", status, body)
+	}
+
 	status, body := h.do(t, http.MethodPost, adminPath,
-		updateBody("NID=rotated; __Secure-1PSID="+testPSID+"; __Secure-1PSIDTS="+testPSIDTS), true)
+		updateBody("NID=rotated; __Secure-1PSID="+testPSID+"; __Secure-1PSIDTS="+newTS), true)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", status, body)
 	}
 	if got := decodeMap(t, body)["status"]; got != string(providers.CookieUpdateNoop) {
 		t.Fatalf("status field = %v, want %q", got, providers.CookieUpdateNoop)
 	}
-	if h.checkHits != 0 {
-		t.Fatalf("session checks = %d, want 0 for a same-PSIDTS push", h.checkHits)
+	if h.checkHits != 1 {
+		t.Fatalf("session checks = %d, want 1: none for the same-PSIDTS push", h.checkHits)
 	}
-	if cookies := h.client.GetCookies(); cookies.Secure1PSIDTS != testPSIDTS {
+	if cookies := h.client.GetCookies(); cookies.Secure1PSIDTS != newTS {
 		t.Fatalf("psidts = %q, want unchanged", cookies.Secure1PSIDTS)
 	}
 }

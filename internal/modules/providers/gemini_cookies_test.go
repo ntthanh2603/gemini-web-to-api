@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gemini-web-to-api/internal/commons/configs"
 
@@ -43,6 +44,140 @@ func newCookieTestClient(t *testing.T, validate func(ctx context.Context, cookie
 func cookieCacheFile(psid string) string {
 	hash := sha256.Sum256([]byte(psid))
 	return filepath.Join(".cookies", hex.EncodeToString(hash[:])+".txt")
+}
+
+// markHealthy marks c's session live, as a successful Init would.
+func markHealthy(c *Client) {
+	c.mu.Lock()
+	c.healthy = true
+	c.mu.Unlock()
+}
+
+func TestUpdateCookiesReplacesConfiguredHeaderForLaterRefreshes(t *testing.T) {
+	c := newCookieTestClient(t, func(context.Context, string) error { return nil })
+	c.mu.Lock()
+	c.configuredCookieHeader = "SID=old-sid; SAPISID=old-sapisid; __Secure-1PSID=" + testCookiePSID + "; __Secure-1PSIDTS=" + testCookieTS
+	c.mu.Unlock()
+
+	pushed := "SID=new-sid; SAPISID=new-sapisid; __Secure-1PSID=new-psid; __Secure-1PSIDTS=new-ts"
+	if _, err := c.UpdateCookies(context.Background(), pushed); err != nil {
+		t.Fatal(err)
+	}
+
+	// refreshSessionToken rebuilds the session from configuredCookieHeader.
+	c.mu.RLock()
+	configured := c.configuredCookieHeader
+	c.mu.RUnlock()
+	next := mergeCookieHeaders(configured, "__Secure-1PSID=new-psid; __Secure-1PSIDTS=new-ts")
+	if strings.Contains(next, "old-sid") || strings.Contains(next, "old-sapisid") {
+		t.Fatalf("next refresh would send %q, want no cookies from GEMINI_COOKIES", next)
+	}
+}
+
+func TestUpdateCookiesRechecksSamePSIDTSWhenUnhealthy(t *testing.T) {
+	checks := 0
+	c := newCookieTestClient(t, func(context.Context, string) error {
+		checks++
+		return nil
+	}) // not initialized, so not healthy
+
+	result, err := c.UpdateCookies(context.Background(),
+		"SID=fresh; __Secure-1PSID="+testCookiePSID+"; __Secure-1PSIDTS="+testCookieTS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != CookieUpdateApplied || checks != 1 {
+		t.Fatalf("status = %q after %d checks, want %q after 1", result.Status, checks, CookieUpdateApplied)
+	}
+	if !c.IsHealthy() {
+		t.Fatal("client still unhealthy after a validated push")
+	}
+}
+
+func TestUpdateCookiesWaitsForOtherSessionChanges(t *testing.T) {
+	c := newCookieTestClient(t, func(context.Context, string) error { return nil })
+
+	c.sessionMu.Lock() // the refresh loop or another push is mid-change
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.UpdateCookies(context.Background(), "__Secure-1PSID=new-psid; __Secure-1PSIDTS=new-ts")
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("UpdateCookies ran while another session change held sessionMu")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := c.GetCookies().Secure1PSIDTS; got != testCookieTS {
+		t.Fatalf("psidts = %q while blocked, want %q", got, testCookieTS)
+	}
+
+	c.sessionMu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpdateCookies did not finish after sessionMu was released")
+	}
+	if got := c.GetCookies().Secure1PSIDTS; got != "new-ts" {
+		t.Fatalf("psidts = %q, want the pushed value", got)
+	}
+}
+
+// restartedClient builds a fresh client in the current directory, as a
+// restart with GEMINI_COOKIES=envCookies would, with Init's Google calls
+// faked to succeed.
+func restartedClient(envCookies string) *Client {
+	cfg := &configs.Config{Gemini: configs.GeminiConfig{
+		Cookies:         envCookies,
+		Secure1PSID:     cookieHeaderValue(envCookies, "__Secure-1PSID"),
+		Secure1PSIDTS:   cookieHeaderValue(envCookies, "__Secure-1PSIDTS"),
+		RefreshInterval: 60,
+		MaxRetries:      1,
+	}}
+	c := NewClientWithSessionValidator(cfg, zap.NewNop(), nil)
+	c.autoRefresh = false
+	c.refreshSessionTokenFn = func(context.Context) error { return nil }
+	return c
+}
+
+func TestPushedSessionSurvivesRestart(t *testing.T) {
+	c := newCookieTestClient(t, func(context.Context, string) error { return nil })
+	pushed := "SID=new-sid; __Secure-1PSID=new-psid; __Secure-1PSIDTS=new-ts"
+	if _, err := c.UpdateCookies(context.Background(), pushed); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := restartedClient("NID=extra; __Secure-1PSID=" + testCookiePSID + "; __Secure-1PSIDTS=" + testCookieTS)
+	if err := restarted.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cookies := restarted.GetCookies()
+	if cookies.Secure1PSID != "new-psid" || cookies.Secure1PSIDTS != "new-ts" || cookies.Source != CookieSourceAdminAPI {
+		t.Fatalf("cookies after restart = %+v, want the pushed session", cookies)
+	}
+	restarted.mu.RLock()
+	configured := restarted.configuredCookieHeader
+	restarted.mu.RUnlock()
+	if configured != pushed {
+		t.Fatalf("configured header after restart = %q, want the pushed header", configured)
+	}
+}
+
+func TestPushedSessionIgnoredAfterGeminiCookiesChange(t *testing.T) {
+	c := newCookieTestClient(t, func(context.Context, string) error { return nil })
+	if _, err := c.UpdateCookies(context.Background(), "__Secure-1PSID=new-psid; __Secure-1PSIDTS=new-ts"); err != nil {
+		t.Fatal(err)
+	}
+
+	edited := "__Secure-1PSID=edited-psid; __Secure-1PSIDTS=edited-ts"
+	restarted := restartedClient(edited)
+	if err := restarted.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cookies := restarted.GetCookies(); cookies.Secure1PSID != "edited-psid" || cookies.Source != CookieSourceEnv {
+		t.Fatalf("cookies after restart = %+v, want the edited GEMINI_COOKIES", cookies)
+	}
 }
 
 func TestUpdateCookiesRejectsMissingRequiredCookies(t *testing.T) {
@@ -81,6 +216,7 @@ func TestUpdateCookiesRejectsMissingRequiredCookies(t *testing.T) {
 
 func TestUpdateCookiesNoopWhenPSIDTSUnchanged(t *testing.T) {
 	c := newCookieTestClient(t, nil) // any session check fails the test
+	markHealthy(c)
 
 	result, err := c.UpdateCookies(context.Background(),
 		"__Secure-1PSID="+testCookiePSID+"; __Secure-1PSIDTS="+testCookieTS+"; NID=rotated")

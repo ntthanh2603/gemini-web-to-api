@@ -258,9 +258,13 @@ curl -X POST http://localhost:4981/admin/cookies \
 - The pushed session is verified against Google before it replaces the live one;
   a bad header returns `4xx` and leaves the current session untouched. The
   token is compared in constant time.
-- Pushing the `__Secure-1PSIDTS` that is already in use returns `200` with
+- Pushing the `__Secure-1PSIDTS` of a healthy live session returns `200` with
   `{"status":"noop"}` and does **not** contact Google, so extensions can push on
-  every cookie change.
+  every cookie change. If the session is unhealthy, the push is verified again,
+  so re-pushing can recover it.
+- The pushed header replaces `GEMINI_COOKIES` for later session refreshes and is
+  saved to `.cookies/pushed-session.json`, so it survives a restart. Editing
+  `GEMINI_COOKIES` afterwards makes the server use the edited value instead.
 - `GET /admin/cookies` (same bearer token) reports a short SHA-256 fingerprint
   of `__Secure-1PSID`, the cache age, the last update time and the update
   source. It never returns cookie values.

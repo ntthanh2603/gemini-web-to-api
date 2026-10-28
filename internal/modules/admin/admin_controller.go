@@ -139,7 +139,9 @@ func (h *Controller) authorize(c fiber.Ctx) bool {
 		}
 	}
 
-	h.log.Warn("Rejected unauthenticated cookie admin request", zap.String("remote_ip", c.IP()))
+	// Info, not Warn: anyone who can reach the port can trigger this, and the
+	// development logger attaches a stack trace to every warning.
+	h.log.Info("Rejected unauthenticated cookie admin request", zap.String("remote_ip", c.IP()))
 	_ = c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
 	return false
 }
