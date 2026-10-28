@@ -8,16 +8,40 @@ import (
 	"go.uber.org/zap"
 )
 
+// capturedLabelFramePayload is payload[2] of a thinking frame as captured from
+// Gemini Web: the label at ["7"][5][0], null reply text at ["7"][0].
+const capturedLabelFramePayload = `{"7":[null,null,null,null,null,["Solving a classic puzzle's relabeling"]],"44":true}`
+
 // thinkingLabelFrame builds one StreamGenerate frame of the shape Gemini sends
-// while it is thinking: a small payload whose only content is the status label
-// at payload[2]["7"][5][0], with an empty rc_ text at payload[2]["7"][0].
+// while it is thinking (see capturedLabelFramePayload): a small payload whose
+// only content is the status label at payload[2]["7"][5][0].
 func thinkingLabelFrame(label string) []interface{} {
 	return []interface{}{
 		nil,
 		[]interface{}{"c_conversation", "r_response"},
 		map[string]interface{}{
-			"7": []interface{}{"", nil, nil, nil, nil, []interface{}{label}},
+			"7":  []interface{}{nil, nil, nil, nil, nil, []interface{}{label}},
+			"44": true,
 		},
+	}
+}
+
+func TestParseResponseReadsCapturedLabelFrame(t *testing.T) {
+	var fields map[string]interface{}
+	if err := json.Unmarshal([]byte(capturedLabelFramePayload), &fields); err != nil {
+		t.Fatal(err)
+	}
+	stream := wireStream(t,
+		[]interface{}{nil, []interface{}{"c_conversation", "r_response"}, fields},
+		answerFrame("Draw from the box labeled mixed."),
+	)
+
+	resp, err := (&Client{log: zap.NewNop()}).parseResponse(stream)
+	if err != nil {
+		t.Fatalf("parseResponse returned error: %v", err)
+	}
+	if resp.ReasoningText != "Solving a classic puzzle's relabeling" {
+		t.Fatalf("ReasoningText = %q, want the captured label", resp.ReasoningText)
 	}
 }
 
@@ -166,6 +190,7 @@ func TestExtractReasoningLabelIgnoresFramesWithoutALabel(t *testing.T) {
 		"label not a string":   {nil, nil, map[string]interface{}{"7": []interface{}{"", nil, nil, nil, nil, []interface{}{42.0}}}},
 		"field 7 not an array": {nil, nil, map[string]interface{}{"7": "not-an-array"}},
 		"payload[2] is a list": {nil, nil, []interface{}{"x"}},
+		"reply text at [0]":    {nil, nil, map[string]interface{}{"7": []interface{}{"Answer.", nil, nil, nil, nil, []interface{}{"not a label"}}}},
 	}
 	for name, payload := range tests {
 		if got := extractReasoningLabel(payload); got != "" {

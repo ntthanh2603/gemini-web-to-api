@@ -153,7 +153,9 @@ func (s *GeminiService) buildPrompt(req dto.GeminiGenerateRequest) (string, []pr
 		}
 
 		for i, part := range content.Parts {
-			if part.Text != "" {
+			// Thought parts are the thought summary of an earlier reply; like the
+			// Gemini API, leave them out of the history sent back to the model.
+			if part.Text != "" && !part.Thought {
 				if rolePrefix != "" {
 					promptBuilder.WriteString(rolePrefix)
 					rolePrefix = ""

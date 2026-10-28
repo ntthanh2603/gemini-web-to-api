@@ -1255,8 +1255,10 @@ func (r *reasoningLabels) text() string {
 
 // extractReasoningLabel reads the thinking status label carried by a decoded
 // StreamGenerate payload. During the thinking phase Gemini sends
-// payload[2] = {"7": [<empty rc_ text>, ..., ["<label>"], ...]} -- the label
-// lives at payload[2]["7"][5][0]. Frames without that shape return "".
+// payload[2] = {"7": [null, null, null, null, null, ["<label>"]], "44": true}
+// -- the label lives at payload[2]["7"][5][0], and the reply text at [0] is
+// still empty. Frames without that shape, including field-7 frames that
+// already carry reply text, return "".
 func extractReasoningLabel(payload []interface{}) string {
 	if len(payload) < 3 {
 		return ""
@@ -1267,6 +1269,9 @@ func extractReasoningLabel(payload []interface{}) string {
 	}
 	parts, ok := fields["7"].([]interface{})
 	if !ok || len(parts) < 6 {
+		return ""
+	}
+	if reply, _ := parts[0].(string); reply != "" {
 		return ""
 	}
 	labels, ok := parts[5].([]interface{})
