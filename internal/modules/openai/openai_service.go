@@ -155,19 +155,7 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	message.Canvases = providers.CanvasFiles(response.Canvases)
 
 	// Logic: Construct Response
-	// Token-count priority: real usageMetadata from the wire, then the
-	// shared heuristic estimate (utils.EstimateTokens) so clients that track
-	// context or cost get a plausible signal instead of zeros.
-	usage := models.Usage{}
-	if response.Usage != nil {
-		usage.PromptTokens = int(response.Usage.PromptTokens)
-		usage.CompletionTokens = int(response.Usage.CompletionTokens)
-		usage.TotalTokens = int(response.Usage.TotalTokens)
-	} else {
-		usage.PromptTokens = utils.EstimateTokens(prompt)
-		usage.CompletionTokens = utils.EstimateTokens(response.Text)
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	}
+	tokens := response.CountTokens(prompt)
 	return &dto.ChatCompletionResponse{
 		ID:             fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
 		Object:         "chat.completion",
@@ -181,7 +169,11 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 				FinishReason: finishReason,
 			},
 		},
-		Usage: usage,
+		Usage: models.Usage{
+			PromptTokens:     tokens.PromptTokens,
+			CompletionTokens: tokens.CompletionTokens,
+			TotalTokens:      tokens.TotalTokens,
+		},
 	}, nil
 }
 
@@ -395,6 +387,21 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 	created := response.Created
 	choice := response.Choices[0]
 
+	// finish sends the final chunk. With stream_options.include_usage, OpenAI
+	// then ends the stream with a chunk that has no choices and the usage.
+	finish := func(final dto.ChatCompletionChunk) {
+		if onEvent(final) && req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
+			onEvent(dto.ChatCompletionChunk{
+				ID:      chunkID,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   response.Model,
+				Choices: []dto.ChunkChoice{},
+				Usage:   &response.Usage,
+			})
+		}
+	}
+
 	// Case 1: Tool Calls
 	if len(choice.Message.ToolCalls) > 0 {
 		for i, tc := range choice.Message.ToolCalls {
@@ -426,7 +433,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 		}
 
 		// Final tool_calls chunk
-		onEvent(dto.ChatCompletionChunk{
+		finish(dto.ChatCompletionChunk{
 			ID:      chunkID,
 			Object:  "chat.completion.chunk",
 			Created: created,
@@ -486,7 +493,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 	}
 
 	// Final text chunk; canvases are sent whole, once.
-	onEvent(dto.ChatCompletionChunk{
+	finish(dto.ChatCompletionChunk{
 		ID:      chunkID,
 		Object:  "chat.completion.chunk",
 		Created: created,

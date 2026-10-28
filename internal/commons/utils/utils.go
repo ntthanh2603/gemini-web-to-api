@@ -18,12 +18,11 @@ import (
 // upstream wire carries no usage metadata. It is rune-based with per-script
 // weighting: CJK runes (Han, Hiragana, Katakana, Hangul) count ~1 token each,
 // every other rune counts ~1/4 token. It replaces the old len(bytes)/4
-// heuristic, which heavily overcounts multi-byte scripts (Vietnamese, CJK).
+// heuristic, which overcounts multi-byte Latin scripts such as Vietnamese and
+// undercounts CJK (3 bytes, but about one token, per rune).
 //
-// Token-count priority on every endpoint, highest first:
-//  1. Real usageMetadata from the wire (when Google sends it).
-//  2. An exact tokenizer, when configured (GEMINI_TOKENIZER_MODEL; future).
-//  3. This heuristic, always available with zero config.
+// Endpoints get their counts through providers.Response.CountTokens, which
+// prefers real usageMetadata from the wire over this heuristic.
 //
 // Estimates are not billing-grade; they exist so clients that track context
 // or cost get a plausible signal instead of zeros.
@@ -42,6 +41,9 @@ func EstimateTokens(text string) int {
 // isCJKRune reports whether r belongs to a script that SentencePiece-style
 // tokenizers emit at roughly one token per character.
 func isCJKRune(r rune) bool {
+	if r < 0x1100 { // below Hangul Jamo, the first block of these scripts
+		return false
+	}
 	return unicode.Is(unicode.Han, r) ||
 		unicode.Is(unicode.Hiragana, r) ||
 		unicode.Is(unicode.Katakana, r) ||

@@ -1,6 +1,9 @@
 package utils
 
-import "testing"
+import (
+	"testing"
+	"unicode"
+)
 
 func TestEstimateTokens(t *testing.T) {
 	tests := []struct {
@@ -27,6 +30,16 @@ func TestEstimateTokens(t *testing.T) {
 				t.Errorf("EstimateTokens(%q) = %d, want %d", tt.text, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIsCJKRuneFastPathSkipsNoCJKRune(t *testing.T) {
+	for _, table := range []*unicode.RangeTable{unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul} {
+		for r := rune(0); r < 0x1100; r++ {
+			if unicode.Is(table, r) {
+				t.Fatalf("rune %U is CJK but below the isCJKRune fast-path bound", r)
+			}
+		}
 	}
 }
 

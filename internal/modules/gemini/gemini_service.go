@@ -99,18 +99,7 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 		}
 	}
 
-	// Token-count priority: real usageMetadata from the wire, then the
-	// shared heuristic estimate (utils.EstimateTokens).
-	usage := &dto.UsageMetadata{
-		PromptTokenCount:     int32(utils.EstimateTokens(prompt)),
-		CandidatesTokenCount: int32(utils.EstimateTokens(response.Text)),
-	}
-	usage.TotalTokenCount = usage.PromptTokenCount + usage.CandidatesTokenCount
-	if response.Usage != nil {
-		usage.PromptTokenCount = int32(response.Usage.PromptTokens)
-		usage.CandidatesTokenCount = int32(response.Usage.CompletionTokens)
-		usage.TotalTokenCount = int32(response.Usage.TotalTokens)
-	}
+	tokens := response.CountTokens(prompt)
 
 	return &dto.GeminiGenerateResponse{
 		Candidates: []dto.Candidate{
@@ -123,7 +112,11 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 				FinishReason: finishReason,
 			},
 		},
-		UsageMetadata: usage,
+		UsageMetadata: &dto.UsageMetadata{
+			PromptTokenCount:     int32(tokens.PromptTokens),
+			CandidatesTokenCount: int32(tokens.CompletionTokens),
+			TotalTokenCount:      int32(tokens.TotalTokens),
+		},
 	}, nil
 }
 
@@ -218,7 +211,11 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 	if err != nil {
 		return err
 	}
+	return s.streamContent(ctx, resp, onEvent)
+}
 
+// streamContent replays a finished response as streamGenerateContent chunks.
+func (s *GeminiService) streamContent(ctx context.Context, resp *dto.GeminiGenerateResponse, onEvent func(dto.GeminiGenerateResponse) bool) error {
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
 		return nil
 	}
@@ -264,7 +261,8 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 		}
 	}
 
-	// Final STOP chunk carries the file parts (canvases, images) whole.
+	// Final STOP chunk carries the file parts (canvases, images) whole, and
+	// the usage, which streaming clients read from the last chunk.
 	var fileParts []dto.Part
 	for _, part := range candidate.Content.Parts {
 		if part.InlineData != nil || part.FileData != nil {
@@ -275,7 +273,7 @@ func (s *GeminiService) GenerateContentStream(ctx context.Context, modelID strin
 	if len(fileParts) > 0 {
 		final.Content = dto.Content{Role: "model", Parts: fileParts}
 	}
-	onEvent(dto.GeminiGenerateResponse{Candidates: []dto.Candidate{final}})
+	onEvent(dto.GeminiGenerateResponse{Candidates: []dto.Candidate{final}, UsageMetadata: resp.UsageMetadata})
 
 	return nil
 }

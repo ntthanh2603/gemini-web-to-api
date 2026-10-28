@@ -37,9 +37,15 @@ type MessageResponse struct {
 	Model      string          `json:"model"`
 	Content    []ConfigContent `json:"content"`
 	StopReason string          `json:"stop_reason"`
-	Usage      models.Usage    `json:"usage"`
+	Usage      Usage           `json:"usage"`
 	// Canvases lists files written by Gemini's Canvas tool ("-canvas" models).
 	Canvases []models.CanvasFile `json:"canvases,omitempty"`
+}
+
+// Usage represents Anthropic token usage
+type Usage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // ConfigContent represents the content block in a response
@@ -60,7 +66,7 @@ type StreamEvent struct {
 	ContentBlock *ConfigContent   `json:"content_block,omitempty"` // present in content_block_start
 	DeltaField   *models.Delta    `json:"delta,omitempty"`         // present in content_block_delta
 	StopReason   string           `json:"stop_reason,omitempty"`   // present in message_stop
-	UsageField   *models.Usage    `json:"usage,omitempty"`         // present in message_delta (optional?) but essential in message_stop sometimes
+	UsageField   *Usage           `json:"usage,omitempty"`         // present in message_delta
 	Error        *Error           `json:"error,omitempty"`         // present in error event
 }
 
