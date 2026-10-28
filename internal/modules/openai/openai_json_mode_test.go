@@ -60,6 +60,13 @@ func TestExtractJSONReply(t *testing.T) {
 		{name: "prose with braces before the object", text: "Picking {name, age}:\n" + personJSON, want: personJSON},
 		{name: "fenced object with prose around the fence", text: "Sure.\n```json\n" + personJSON + "\n```\nDone.", want: personJSON},
 		{name: "raw newline inside a string", text: "{\"name\":\"Ada\nLovelace\",\"age\":36}", want: "{\"name\":\"Ada\\nLovelace\",\"age\":36}"},
+		{
+			name: "raw newline next to a nested object repairs the whole reply",
+			text: "{\"name\":\"Ada\",\"meta\":{\"a\":1},\"bio\":\"line1\nline2\"}",
+			want: "{\"name\":\"Ada\",\"meta\":{\"a\":1},\"bio\":\"line1\\nline2\"}",
+		},
+		{name: "broken object never yields a nested one", text: `{"person":{"name":"Ada","age":36},}`, want: ""},
+		{name: "truncated object never yields a nested one", text: `{"person":{"name":"Ada","age":36},"bio":"Mathem`, want: ""},
 		{name: "not JSON", text: "The answer is 42.", want: ""},
 		{name: "truncated object", text: `{"name":"Ada"`, want: ""},
 		{name: "empty", text: "   ", want: ""},
@@ -154,6 +161,9 @@ func TestBuildJSONModePrompt(t *testing.T) {
 	}
 	if !strings.Contains(objectPrompt, base) {
 		t.Errorf("json_object prompt dropped the conversation:\n%s", objectPrompt)
+	}
+	if strings.Contains(objectPrompt, `{"answer"`) {
+		t.Errorf("json_object prompt must not suggest a shape the model copies:\n%s", objectPrompt)
 	}
 
 	schemaPrompt := buildJSONModePrompt(base, json.RawMessage(personSchema))
@@ -274,7 +284,7 @@ func TestCreateChatCompletionJSONModeSkipsToolCalls(t *testing.T) {
 	if choice.Message.Content != "" {
 		t.Errorf("content = %q, want empty", choice.Message.Content)
 	}
-	if !strings.Contains(fake.prompts[0], `Write "content" as a single JSON object.`) {
+	if !strings.Contains(fake.prompts[0], `"content" must be the reply itself as a JSON object (not a string)`) {
 		t.Errorf("tool bridge prompt does not ask for JSON content:\n%s", fake.prompts[0])
 	}
 }
@@ -298,6 +308,56 @@ func TestCreateChatCompletionJSONModeRepairsToolBridgeContent(t *testing.T) {
 	}
 	if got := resp.Choices[0].Message.Content; got != `{"ok":true}` {
 		t.Errorf("content = %q, want the repaired JSON", got)
+	}
+}
+
+func TestCreateChatCompletionJSONModeAcceptsObjectToolBridgeContent(t *testing.T) {
+	for _, format := range []dto.ResponseFormat{
+		{Type: "json_object"},
+		{Type: "json_schema", JSONSchema: json.RawMessage(`{"name":"person","schema":` + personSchema + `}`)},
+	} {
+		t.Run(format.Type, func(t *testing.T) {
+			// The bridge rule asks for the JSON reply itself in "content".
+			fake := &fakeGemini{replies: []string{`{"content":` + personJSON + `}`}}
+			service := newJSONModeTestService(t, fake, zap.NewNop())
+
+			req := doneToolRequest(t, `"auto"`)
+			req.ResponseFormat = &format
+
+			resp, err := service.CreateChatCompletion(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(fake.prompts) != 1 {
+				t.Fatalf("Gemini was called %d times, want 1", len(fake.prompts))
+			}
+			if got := resp.Choices[0].Message.Content; got != personJSON {
+				t.Errorf("content = %q, want the object from the bridge content, unwrapped", got)
+			}
+		})
+	}
+}
+
+func TestCreateChatCompletionJSONModeToolBridgeRepairIsOneRequest(t *testing.T) {
+	fake := &fakeGemini{replies: []string{
+		`{"content":"Sure, here you go."}`,
+		// An unusable tool call: generateToolBridge would retry it.
+		`{"tool_calls":[{"name":"done","arguments":{}}]}`,
+	}}
+	service := newJSONModeTestService(t, fake, zap.NewNop())
+
+	req := doneToolRequest(t, `"auto"`)
+	req.ResponseFormat = &dto.ResponseFormat{Type: "json_object"}
+
+	resp, err := service.CreateChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.prompts) != 2 {
+		t.Fatalf("Gemini was called %d times, want 2: the repair is a single request", len(fake.prompts))
+	}
+	if got := resp.Choices[0].Message.Content; got != "Sure, here you go." {
+		t.Errorf("content = %q, want the raw reply after a failed repair", got)
 	}
 }
 

@@ -27,7 +27,7 @@ func buildJSONModePrompt(basePrompt string, schema json.RawMessage) string {
 		b.Write(schema)
 		b.WriteString("\nSet every required property.\n")
 	} else {
-		b.WriteString("The reply must be a single JSON object, for example {\"answer\":\"...\"}.\n")
+		b.WriteString("The reply must be a single JSON object, with the fields the conversation asks for.\n")
 	}
 	b.WriteString("\nConversation:\n")
 	b.WriteString(basePrompt)
@@ -56,49 +56,58 @@ func repairJSONPrompt(basePrompt string, schema json.RawMessage, cause error) st
 // extractJSONReply returns the JSON document in a model reply, dropping a
 // markdown code fence and any prose around the JSON. It returns "" when the
 // reply carries no valid JSON.
+//
+// The whole reply, with and without its code fence, is tried before any object
+// inside it, and only top-level objects are tried, so a reply that is broken as
+// a whole never yields one of its nested objects as the answer. Candidates are
+// checked as they are found, stopping at the first valid one.
 func extractJSONReply(text string) string {
-	for _, candidate := range jsonReplyCandidates(text) {
-		if json.Valid([]byte(candidate)) {
-			return candidate
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	forms := []string{trimmed}
+	if unfenced := utils.StripCodeFence(trimmed); unfenced != "" && unfenced != trimmed {
+		forms = append(forms, unfenced)
+	}
+
+	for _, form := range forms {
+		if doc := validJSON(form); doc != "" {
+			return doc
+		}
+	}
+	for _, form := range forms {
+		for rest := form; ; {
+			start := strings.Index(rest, "{")
+			if start < 0 {
+				break
+			}
+			obj := utils.ExtractFirstJSONObject(rest[start:])
+			if obj == "" {
+				// The object never closes, so everything after it is nested
+				// inside it: there is no further top-level object.
+				break
+			}
+			if doc := validJSON(obj); doc != "" {
+				return doc
+			}
+			rest = rest[start+len(obj):]
 		}
 	}
 	return ""
 }
 
-// jsonReplyCandidates lists the substrings of a reply that could be its JSON,
-// most literal first: the whole reply, the reply without its code fence, the
-// first balanced object inside either (skipping objects that precede it), and
-// escaped variants of all of them, because Gemini often writes raw newlines
-// inside JSON strings.
-func jsonReplyCandidates(text string) []string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return nil
+// validJSON returns doc when it is valid JSON, its escaped form when only raw
+// control characters inside strings break it (Gemini often writes raw newlines
+// there), and "" otherwise.
+func validJSON(doc string) string {
+	if json.Valid([]byte(doc)) {
+		return doc
 	}
-
-	var candidates []string
-	for _, raw := range []string{trimmed, utils.StripCodeFence(trimmed)} {
-		if raw == "" {
-			continue
-		}
-		candidates = append(candidates, raw)
-		for start := strings.Index(raw, "{"); start >= 0; {
-			if obj := utils.ExtractFirstJSONObject(raw[start:]); obj != "" {
-				candidates = append(candidates, obj)
-			}
-			next := strings.Index(raw[start+1:], "{")
-			if next < 0 {
-				break
-			}
-			start += next + 1
-		}
+	if escaped := utils.EscapeJSONStringControlChars(doc); escaped != doc && json.Valid([]byte(escaped)) {
+		return escaped
 	}
-
-	escaped := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		escaped = append(escaped, utils.EscapeJSONStringControlChars(candidate))
-	}
-	return append(candidates, escaped...)
+	return ""
 }
 
 // jsonSchemaShape is the part of a JSON Schema that response_format checks: the

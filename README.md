@@ -344,13 +344,16 @@ Gemini Web has no JSON mode, so this is best-effort:
 - A `json` markdown code fence and any prose around the JSON are stripped before
   the reply is checked: `json_object` needs valid JSON that parses to an object,
   `json_schema` also needs the requested top-level type and every required key
-  (deeper schema checks are not enforced).
+  (deeper schema checks are not enforced). A reply that is broken as a whole is
+  never answered with one of the objects nested inside it.
 - A reply that does not match is sent back to Gemini **once** for a repair. That
-  is a second request on your Google account, so it never loops: if the repair is
-  still invalid, the raw reply is returned and a warning is logged.
-- `{"type": "text"}` (the default) and unknown types are ignored. When the model
-  calls a tool, the tool call is returned unchanged and JSON mode is skipped, so
-  a tool call is never re-asked for JSON.
+  is a second request on your Google account, so it never loops, with or without
+  tools: if the repair is still invalid, the raw reply is returned and a warning
+  is logged.
+- `{"type": "text"}` (the default) and unknown types are ignored. With tools, a
+  reply without a tool call carries its JSON in the bridge's `content`; when the
+  model calls a tool, the tool call is returned unchanged and JSON mode is
+  skipped, so a tool call is never re-asked for JSON.
 
 ### OpenAI SDK (Python)
 

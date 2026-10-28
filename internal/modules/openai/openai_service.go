@@ -161,9 +161,15 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 		} else {
 			message.Content = content
 		}
+		// One request, not generateToolBridge and its retries, so the repair
+		// stays a single extra request; a tool call in it is not used.
 		regenerate = func(repairPrompt string) (string, error) {
-			_, _, repaired, err := s.generateToolBridge(ctx, req, repairPrompt, opts)
-			return repaired, err
+			repaired, err := s.generate(ctx, repairPrompt, opts...)
+			if err != nil {
+				return "", err
+			}
+			_, content, err := s.parseToolBridgeOutput(req, repaired.Text)
+			return content, err
 		}
 	} else {
 		response, err = s.generate(ctx, prompt, opts...)
@@ -547,8 +553,27 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 }
 
 type toolBridgePayload struct {
-	ToolCalls []toolBridgeCall `json:"tool_calls"`
-	Content   string           `json:"content"`
+	ToolCalls []toolBridgeCall  `json:"tool_calls"`
+	Content   toolBridgeContent `json:"content"`
+}
+
+// toolBridgeContent is the bridge reply's "content". It is normally a string,
+// but under response_format the model may put the JSON reply itself there as an
+// object or array, which is kept as its JSON text.
+type toolBridgeContent string
+
+func (c *toolBridgeContent) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*c = toolBridgeContent(text)
+		return nil
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return errors.New("content must be a string, object or array")
+	}
+	*c = toolBridgeContent(trimmed)
+	return nil
 }
 
 type toolBridgeCall struct {
@@ -618,7 +643,14 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	b.WriteString("You are an OpenAI-compatible assistant running behind a bridge to Gemini web.\n")
 	b.WriteString("You MUST respond with JSON only. Do not output markdown code fences.\n")
 	b.WriteString("Output schema:\n")
-	b.WriteString("{\"tool_calls\":[{\"name\":\"<tool_name>\",\"arguments\":{\"<parameter>\":<value>}}]} OR {\"content\":\"<assistant_text>\"}\n")
+	b.WriteString("{\"tool_calls\":[{\"name\":\"<tool_name>\",\"arguments\":{\"<parameter>\":<value>}}]} OR ")
+	if _, jsonMode := req.JSONResponseRequested(); jsonMode {
+		// The reply itself is JSON: show it as a value, not a string, or the
+		// model follows this template and writes prose.
+		b.WriteString("{\"content\":<reply_json>}\n")
+	} else {
+		b.WriteString("{\"content\":\"<assistant_text>\"}\n")
+	}
 	b.WriteString("Rules:\n")
 	b.WriteString("- Use only tool names listed below.\n")
 	b.WriteString("- arguments must be a JSON object that sets every required parameter of the tool's parameters schema.\n")
@@ -641,11 +673,11 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	}
 	if schema, jsonMode := req.JSONResponseRequested(); jsonMode {
 		if len(schema) > 0 {
-			b.WriteString("- Write \"content\" as a single JSON value matching this JSON Schema: ")
+			b.WriteString("- Without a tool call, \"content\" must be the reply itself as a JSON value (not a string) matching this JSON Schema: ")
 			b.Write(schema)
 			b.WriteString(". Set every required property.\n")
 		} else {
-			b.WriteString("- Write \"content\" as a single JSON object.\n")
+			b.WriteString("- Without a tool call, \"content\" must be the reply itself as a JSON object (not a string), with the fields the conversation asks for.\n")
 		}
 	}
 
@@ -733,7 +765,7 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 		return nil, "", errors.New("no tool call named one of the requested tools")
 	}
 
-	content := strings.TrimSpace(payload.Content)
+	content := strings.TrimSpace(string(payload.Content))
 	if content == "" && len(calls) == 0 {
 		content = strings.TrimSpace(text)
 	}
@@ -773,7 +805,7 @@ func unmarshalToolBridgePayload(text string) (toolBridgePayload, bool) {
 			return toolBridgePayload{}, false
 		}
 	}
-	if len(payload.ToolCalls) == 0 && strings.TrimSpace(payload.Content) == "" {
+	if len(payload.ToolCalls) == 0 && strings.TrimSpace(string(payload.Content)) == "" {
 		return toolBridgePayload{}, false
 	}
 	return payload, true
