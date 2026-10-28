@@ -120,7 +120,7 @@ func (c *Client) uploadRequestFiles(ctx context.Context, cfg *GenerateConfig, co
 	for i, file := range cfg.InputFiles {
 		name := strings.TrimSpace(file.Name)
 		if name == "" {
-			name = fmt.Sprintf("input_%d%s", i+1, extensionForMimeType(file.MimeType))
+			name = fmt.Sprintf("input_%d%s", i+1, models.ExtensionForMimeType(file.MimeType))
 		}
 		mimeType := strings.TrimSpace(file.MimeType)
 		if mimeType == "" {
@@ -341,19 +341,4 @@ func (c *Client) pushIDOrDefault() string {
 		return c.pushID
 	}
 	return "feeds/mcudyrk2a4khkz"
-}
-
-func extensionForMimeType(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	case "image/gif":
-		return ".gif"
-	default:
-		return ".bin"
-	}
 }

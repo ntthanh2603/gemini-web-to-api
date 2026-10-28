@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"gemini-web-to-api/internal/commons/models"
 	"gemini-web-to-api/internal/commons/utils"
 	"gemini-web-to-api/internal/modules/gemini/dto"
 	"gemini-web-to-api/internal/modules/providers"
@@ -18,12 +19,15 @@ import (
 type GeminiService struct {
 	client *providers.Client
 	log    *zap.Logger
+	// generate sends a prompt to Gemini; tests replace it.
+	generate func(ctx context.Context, prompt string, options ...providers.GenerateOption) (*providers.Response, error)
 }
 
 func NewGeminiService(client *providers.Client, log *zap.Logger) *GeminiService {
 	return &GeminiService{
-		client: client,
-		log:    log,
+		client:   client,
+		log:      log,
+		generate: client.GenerateContent,
 	}
 }
 
@@ -49,7 +53,7 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 	if len(inputFiles) > 0 {
 		opts = append(opts, providers.WithInputFiles(inputFiles))
 	}
-	response, err := s.client.GenerateContent(ctx, prompt, opts...)
+	response, err := s.generate(ctx, prompt, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +66,7 @@ func (s *GeminiService) GenerateContent(ctx context.Context, modelID string, req
 		resParts = append(resParts, dto.Part{Text: response.ReasoningText, Thought: true})
 	}
 
-	if len(req.Tools) > 0 {
+	if req.HasToolsEnabled() {
 		functionCalls, content := s.parseToolBridgeOutput(req, response.Text)
 		if len(functionCalls) > 0 {
 			for _, fc := range functionCalls {
@@ -154,14 +158,12 @@ func (s *GeminiService) buildPrompt(req dto.GeminiGenerateRequest) (string, []pr
 		}
 
 		for i, part := range content.Parts {
-			// Thought parts are the thought summary of an earlier reply; like the
-			// Gemini API, leave them out of the history sent back to the model.
-			if part.Text != "" && !part.Thought {
+			if text := historyPartText(part); text != "" {
 				if rolePrefix != "" {
 					promptBuilder.WriteString(rolePrefix)
 					rolePrefix = ""
 				}
-				promptBuilder.WriteString(part.Text)
+				promptBuilder.WriteString(text)
 				promptBuilder.WriteString("\n")
 			}
 			if part.InlineData != nil && part.InlineData.Data != "" {
@@ -170,7 +172,7 @@ func (s *GeminiService) buildPrompt(req dto.GeminiGenerateRequest) (string, []pr
 					return "", nil, fmt.Errorf("decode inline_data: %w", err)
 				}
 				inputFiles = append(inputFiles, providers.InputFile{
-					Name:     fmt.Sprintf("inline_%d%s", i+1, extensionForMimeType(part.InlineData.MimeType)),
+					Name:     fmt.Sprintf("inline_%d%s", i+1, models.ExtensionForMimeType(part.InlineData.MimeType)),
 					MimeType: part.InlineData.MimeType,
 					Data:     data,
 				})
@@ -186,50 +188,35 @@ func (s *GeminiService) buildPrompt(req dto.GeminiGenerateRequest) (string, []pr
 		prompt = fmt.Sprintf("[%d file(s) attached]", len(inputFiles))
 	}
 
-	if len(req.Tools) > 0 {
+	if req.HasToolsEnabled() {
 		prompt = s.buildToolBridgePrompt(req, prompt)
 	}
 
 	return prompt, inputFiles, nil
 }
 
-func extensionForMimeType(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	case "image/gif":
-		return ".gif"
-	case "application/pdf":
-		return ".pdf"
-	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-		return ".docx"
-	case "application/msword":
-		return ".doc"
-	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-		return ".xlsx"
-	case "application/vnd.ms-excel":
-		return ".xls"
-	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		return ".pptx"
-	case "application/vnd.ms-powerpoint":
-		return ".ppt"
-	case "text/plain":
-		return ".txt"
-	case "text/markdown":
-		return ".md"
-	case "text/csv":
-		return ".csv"
-	case "application/json":
-		return ".json"
-	case "application/rtf":
-		return ".rtf"
-	default:
-		return ".bin"
+// historyPartText renders one history part for the prompt: its text, or a tool
+// call or tool result in the bracketed form the OpenAI and Claude bridges use,
+// so the model sees what it already called and what came back instead of
+// calling the same tool again.
+func historyPartText(part dto.Part) string {
+	switch {
+	case part.Thought:
+		// Thought parts are the thought summary of an earlier reply; like the
+		// Gemini API, leave them out of the history sent back to the model.
+		return ""
+	case part.Text != "":
+		return part.Text
+	case part.FunctionCall != nil:
+		args := strings.TrimSpace(string(part.FunctionCall.Args))
+		if args == "" || args == "null" {
+			args = "{}"
+		}
+		return fmt.Sprintf("[Call Tool: %s with Input: %s]", part.FunctionCall.Name, args)
+	case part.FunctionResponse != nil:
+		return fmt.Sprintf("[Tool Result for %s]: %s", part.FunctionResponse.Name, strings.TrimSpace(string(part.FunctionResponse.Response)))
 	}
+	return ""
 }
 
 // GenerateContentStream handles Gemini's streaming simulation logic in the service layer.
@@ -324,10 +311,16 @@ func (s *GeminiService) buildToolBridgePrompt(req dto.GeminiGenerateRequest, bas
 	b.WriteString("Rules:\n")
 	b.WriteString("- Use only tool names listed below.\n")
 	b.WriteString("- arguments must be valid JSON object.\n")
+	if req.FunctionCallingMode() == "ANY" {
+		b.WriteString("- You must return at least one tool call (status \"call\").\n")
+	}
 
 	b.WriteString("Available tools:\n")
 	for _, tool := range req.Tools {
 		for _, fn := range tool.FunctionDeclarations {
+			if !req.AllowsFunction(fn.Name) {
+				continue
+			}
 			b.WriteString("- name: ")
 			b.WriteString(fn.Name)
 			if fn.Description != "" {
@@ -369,12 +362,19 @@ func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, tex
 	if payload.Status == "call" && len(payload.ToolCalls) > 0 {
 		calls := make([]dto.FunctionCall, 0, len(payload.ToolCalls))
 		for _, tc := range payload.ToolCalls {
+			// Only declared tools that tool_config allows reach the client.
+			if !req.DeclaresFunction(tc.Name) || !req.AllowsFunction(tc.Name) {
+				s.log.Warn("Dropped a tool call for an undeclared or disallowed function", zap.String("name", tc.Name))
+				continue
+			}
 			calls = append(calls, dto.FunctionCall{
 				Name: tc.Name,
 				Args: tc.Arguments,
 			})
 		}
-		return calls, ""
+		if len(calls) > 0 {
+			return calls, ""
+		}
 	}
 
 	return nil, payload.Content

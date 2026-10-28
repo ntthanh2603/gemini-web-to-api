@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+func TestExtensionForMimeType(t *testing.T) {
+	for mimeType, want := range map[string]string{
+		"image/jpeg":                ".jpg",
+		"Application/PDF":           ".pdf",
+		"text/plain; charset=utf-8": ".txt",
+		"text/csv;charset=UTF-8":    ".csv",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+		"application/octet-stream": ".bin",
+		"":                         ".bin",
+		"not a mime type":          ".bin",
+	} {
+		if got := ExtensionForMimeType(mimeType); got != want {
+			t.Errorf("ExtensionForMimeType(%q) = %q, want %q", mimeType, got, want)
+		}
+	}
+}
+
 func TestMessage_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name        string

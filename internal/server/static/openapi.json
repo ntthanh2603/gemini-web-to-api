@@ -1183,17 +1183,20 @@
         "gemini-web-to-api_internal_modules_gemini_dto.Part": {
             "type": "object",
             "properties": {
-                "function_call": {
+                "functionCall": {
                     "$ref": "#/definitions/gemini-web-to-api_internal_modules_gemini_dto.FunctionCall"
                 },
-                "function_response": {
+                "functionResponse": {
                     "$ref": "#/definitions/gemini-web-to-api_internal_modules_gemini_dto.FunctionResponse"
                 },
-                "inline_data": {
+                "inlineData": {
                     "$ref": "#/definitions/gemini-web-to-api_internal_modules_gemini_dto.InlineData"
                 },
                 "text": {
                     "type": "string"
+                },
+                "thought": {
+                    "type": "boolean"
                 }
             }
         },

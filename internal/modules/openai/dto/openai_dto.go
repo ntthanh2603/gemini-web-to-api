@@ -150,25 +150,10 @@ func attachmentFromDataURL(value string, index int) (models.Attachment, bool) {
 		mimeType = "application/octet-stream"
 	}
 	return models.Attachment{
-		Name:     fmt.Sprintf("image_%d%s", index, extensionFromMimeType(mimeType)),
+		Name:     fmt.Sprintf("image_%d%s", index, models.ExtensionForMimeType(mimeType)),
 		MimeType: mimeType,
 		Data:     metaAndData[1],
 	}, true
-}
-
-func extensionFromMimeType(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(mimeType)) {
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	case "image/gif":
-		return ".gif"
-	default:
-		return ".bin"
-	}
 }
 
 // ToolFunctionDefinition represents OpenAI tool function schema

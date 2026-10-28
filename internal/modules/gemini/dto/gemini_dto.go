@@ -1,6 +1,9 @@
 package dto
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // GeminiModelsResponse represents the response from /v1beta/models
 type GeminiModelsResponse struct {
@@ -46,39 +49,71 @@ func (r *GeminiGenerateRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// FunctionCallingMode returns tool_config's mode upper-cased: "AUTO", "ANY",
+// "NONE", or "" when it is not set.
+func (r GeminiGenerateRequest) FunctionCallingMode() string {
+	if r.ToolConfig == nil || r.ToolConfig.FunctionCallingConfig == nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(r.ToolConfig.FunctionCallingConfig.Mode))
+}
+
+// HasToolsEnabled reports whether the model may call functions: some are
+// declared and tool_config mode is not NONE.
+func (r GeminiGenerateRequest) HasToolsEnabled() bool {
+	if r.FunctionCallingMode() == "NONE" {
+		return false
+	}
+	for _, tool := range r.Tools {
+		if len(tool.FunctionDeclarations) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// DeclaresFunction reports whether name is one of the declared functions.
+func (r GeminiGenerateRequest) DeclaresFunction(name string) bool {
+	for _, tool := range r.Tools {
+		for _, fn := range tool.FunctionDeclarations {
+			if fn.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AllowsFunction reports whether tool_config's allowed_function_names permits
+// name; an empty list allows every declared function.
+func (r GeminiGenerateRequest) AllowsFunction(name string) bool {
+	if r.ToolConfig == nil || r.ToolConfig.FunctionCallingConfig == nil ||
+		len(r.ToolConfig.FunctionCallingConfig.AllowedFunctionNames) == 0 {
+		return true
+	}
+	for _, allowed := range r.ToolConfig.FunctionCallingConfig.AllowedFunctionNames {
+		if allowed == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Content represents a content block in Gemini API
 type Content struct {
 	Role  string `json:"role,omitempty"`
 	Parts []Part `json:"parts"`
 }
 
-// Part represents a part of content
+// Part represents a part of content. It is written in the REST (camelCase)
+// spellings official SDKs parse; UnmarshalJSON also accepts snake_case.
 type Part struct {
 	Text             string            `json:"text,omitempty"`
 	Thought          bool              `json:"thought,omitempty"`
-	InlineData       *InlineData       `json:"inline_data,omitempty"`
-	FileData         *FileData         `json:"file_data,omitempty"`
-	FunctionCall     *FunctionCall     `json:"function_call,omitempty"`
-	FunctionResponse *FunctionResponse `json:"function_response,omitempty"`
-}
-
-// MarshalJSON writes the part in the REST spellings, which is what official SDKs parse
-func (p Part) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Text             string            `json:"text,omitempty"`
-		Thought          bool              `json:"thought,omitempty"`
-		InlineData       *InlineData       `json:"inlineData,omitempty"`
-		FileData         *FileData         `json:"fileData,omitempty"`
-		FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
-		FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
-	}{
-		Text:             p.Text,
-		Thought:          p.Thought,
-		InlineData:       p.InlineData,
-		FileData:         p.FileData,
-		FunctionCall:     p.FunctionCall,
-		FunctionResponse: p.FunctionResponse,
-	})
+	InlineData       *InlineData       `json:"inlineData,omitempty"`
+	FileData         *FileData         `json:"fileData,omitempty"`
+	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
 }
 
 func (p *Part) UnmarshalJSON(data []byte) error {
