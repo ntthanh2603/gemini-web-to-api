@@ -5,13 +5,67 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"gemini-web-to-api/internal/commons/models"
 
 	"go.uber.org/zap"
 )
+
+// Web-UI artifact patterns. They are intentionally narrow so that normal content
+// is never rewritten: only numeric citation lists, the [cite_start] marker and
+// code-event query suffixes attached to a markdown code-fence opening line.
+var (
+	// citationMarkerRe matches "[cite: 3]" and "[cite: 3, 7]".
+	citationMarkerRe = regexp.MustCompile(`\[cite:[ 	]*\d+(?:[ 	]*,[ 	]*\d+)*\]`)
+	// citeStartMarkerRe matches the "[cite_start]" marker preceding a cited passage.
+	citeStartMarkerRe = regexp.MustCompile(`\[cite_start\]`)
+	// codeFenceArtifactRe matches a code-fence opening line carrying a web-UI
+	// code-event suffix, e.g. "```python?code_reference&code_event_index=1" or
+	// "```text?code_stdout&code_event_index=1". The suffix is dropped, the fence
+	// and its language tag are kept.
+	codeFenceArtifactRe = regexp.MustCompile("^([ 	]*```[^\\s?]*)\\?(?:code_reference|code_stdout)(?:&[A-Za-z0-9_.=&%~-]*)?[ 	\r]*$")
+)
+
+// EstimateTokens approximates a SentencePiece token count for text when the
+// upstream wire carries no usage metadata. It is rune-based with per-script
+// weighting: CJK runes (Han, Hiragana, Katakana, Hangul) count ~1 token each,
+// every other rune counts ~1/4 token. It replaces the old len(bytes)/4
+// heuristic, which overcounts multi-byte Latin scripts such as Vietnamese and
+// undercounts CJK (3 bytes, but about one token, per rune).
+//
+// Endpoints get their counts through providers.Response.CountTokens, which
+// prefers real usageMetadata from the wire over this heuristic.
+//
+// Estimates are not billing-grade; they exist so clients that track context
+// or cost get a plausible signal instead of zeros.
+func EstimateTokens(text string) int {
+	var cjk, other int
+	for _, r := range text {
+		if isCJKRune(r) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return cjk + (other+3)/4
+}
+
+// isCJKRune reports whether r belongs to a script that SentencePiece-style
+// tokenizers emit at roughly one token per character.
+func isCJKRune(r rune) bool {
+	if r < 0x1100 { // below Hangul Jamo, the first block of these scripts
+		return false
+	}
+	return unicode.Is(unicode.Han, r) ||
+		unicode.Is(unicode.Hiragana, r) ||
+		unicode.Is(unicode.Katakana, r) ||
+		unicode.Is(unicode.Hangul, r)
+}
 
 // BuildPromptFromMessages constructs a unified prompt from messages
 func BuildPromptFromMessages(messages []models.Message, systemPrompt string) string {
@@ -292,6 +346,92 @@ func StripCodeFence(text string) string {
 		trimmed = strings.TrimSpace(trimmed[:idx])
 	}
 	return trimmed
+}
+
+// StripCitationArtifacts removes the citation and code-event artifacts that Gemini's
+// web UI injects into response text. It is deliberately narrow: only "[cite: N]" /
+// "[cite: N, M]" lists, "[cite_start]" markers and "?code_reference..." /
+// "?code_stdout..." suffixes on markdown code-fence opening lines are removed, so
+// ordinary prose (including literal brackets and unfenced query strings) is left
+// untouched.
+func StripCitationArtifacts(text string) string {
+	if text == "" {
+		return text
+	}
+	if !strings.Contains(text, "[cite") && !strings.Contains(text, "?code_") {
+		return text
+	}
+
+	text = removeInlineMarkers(text, citationMarkerRe)
+	text = removeInlineMarkers(text, citeStartMarkerRe)
+
+	if !strings.Contains(text, "?code_") {
+		return text
+	}
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		m := codeFenceArtifactRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if strings.HasSuffix(line, "\r") {
+			lines[i] = m[1] + "\r"
+			continue
+		}
+		lines[i] = m[1]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// removeInlineMarkers deletes every match of re from text. When a marker sits
+// between words it is simply cut out; when what follows it closes the phrase
+// (see closesPhrase), one preceding space is removed too so no "word ." or
+// trailing space is left behind.
+func removeInlineMarkers(text string, re *regexp.Regexp) string {
+	matches := re.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		if start > last && text[start-1] == ' ' && closesPhrase(text[end:]) {
+			start--
+		}
+		b.WriteString(text[last:start])
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+// closingPunctuation lists sentence and clause punctuation, ASCII and CJK,
+// that attaches to the word before it.
+const closingPunctuation = ".,;:!?…。、，．；：！？"
+
+// closesPhrase reports whether rest, the text right after a removed marker,
+// attaches to the word before the marker: the end of the text, whitespace,
+// closing punctuation, or a closing run of markdown delimiters or quotes as in
+// "**claim [cite: 1]**.". Anything else starts a new phrase whose leading space
+// must stay, such as the bold label in "* [cite_start]**Label:** text".
+func closesPhrase(rest string) bool {
+	if rest == "" {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	switch {
+	case unicode.IsSpace(r), strings.ContainsRune(closingPunctuation, r):
+		return true
+	case unicode.Is(unicode.Pe, r), unicode.Is(unicode.Pf, r): // ) ] } 」 ” ...
+		return true
+	case strings.ContainsRune("*_~`\"'", r):
+		// A delimiter run closes when no word follows it.
+		return closesPhrase(strings.TrimLeft(rest, string(r)))
+	}
+	return false
 }
 
 // ExtractThinkingAndText separates the thinking process and final text from the raw string.

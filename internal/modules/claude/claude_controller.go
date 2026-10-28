@@ -168,14 +168,8 @@ func (h *ClaudeController) HandleCountTokens(c fiber.Ctx) error {
 		})
 	}
 
-	// Simple estimation
-	totalChars := len(req.System.Text)
-	for _, m := range req.Messages {
-		totalChars += len(m.Content)
-	}
-
 	return c.JSON(fiber.Map{
-		"input_tokens": totalChars / 4,
+		"input_tokens": h.service.CountTokens(req),
 	})
 }
 

@@ -211,13 +211,11 @@ type Delta struct {
 	Role        string `json:"role,omitempty"`
 }
 
-// Usage represents token usage (compatible format)
+// Usage represents OpenAI token usage
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
-	InputTokens      int `json:"input_tokens,omitempty"`
-	OutputTokens     int `json:"output_tokens,omitempty"`
 }
 
 // ErrorResponse represents a standard error response

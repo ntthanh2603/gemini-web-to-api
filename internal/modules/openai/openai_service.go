@@ -83,6 +83,24 @@ func geminiThinkingLevel(effort string) string {
 	return effort
 }
 
+// cleanGeneratedText strips Gemini's image placeholders from a reply so the
+// markdown links added afterwards are the only image references.
+func cleanGeneratedText(text string) string {
+	return strings.TrimSpace(imagePlaceholderRegex.ReplaceAllString(text, ""))
+}
+
+// withImageMarkdown appends generated images to a text reply as markdown links.
+func withImageMarkdown(content string, images []providers.Image) string {
+	markdowns := make([]string, 0, len(images))
+	for _, img := range images {
+		markdowns = append(markdowns, fmt.Sprintf("![image](%s)", img.URL))
+	}
+	if content == "" {
+		return strings.Join(markdowns, "\n")
+	}
+	return content + "\n\n" + strings.Join(markdowns, "\n")
+}
+
 func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCompletionRequest) (*dto.ChatCompletionResponse, error) {
 	modelMessages := req.ToModelMessages()
 
@@ -94,6 +112,14 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	prompt := utils.BuildPromptFromMessages(modelMessages, "")
 	if prompt == "" {
 		return nil, fmt.Errorf("no valid content in messages")
+	}
+
+	// response_format is best-effort: ask for the shape in the prompt. With
+	// tools enabled the tool bridge prompt carries the rule instead, because it
+	// already owns the reply format.
+	jsonSchema, jsonMode := req.JSONResponseRequested()
+	if jsonMode && !req.HasToolsEnabled() {
+		prompt = buildJSONModePrompt(prompt, jsonSchema)
 	}
 
 	if req.HasToolsEnabled() {
@@ -117,6 +143,10 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 	message := dto.ChatCompletionResponseMessage{Role: "assistant"}
 	finishReason := "stop"
 
+	// regenerate asks Gemini for the reply again; a response_format repair goes
+	// through the same path (tool bridge or plain) as the first request.
+	var regenerate func(string) (string, error)
+
 	if req.HasToolsEnabled() {
 		var toolCalls []dto.ChatCompletionToolCall
 		var content string
@@ -131,40 +161,49 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 		} else {
 			message.Content = content
 		}
+		// One request, not generateToolBridge and its retries, so the repair
+		// stays a single extra request; a tool call in it is not used.
+		regenerate = func(repairPrompt string) (string, error) {
+			repaired, err := s.generate(ctx, repairPrompt, opts...)
+			if err != nil {
+				return "", err
+			}
+			_, content, err := s.parseToolBridgeOutput(req, repaired.Text)
+			return content, err
+		}
 	} else {
 		response, err = s.generate(ctx, prompt, opts...)
 		if err != nil {
 			return nil, err
 		}
-		content := imagePlaceholderRegex.ReplaceAllString(response.Text, "")
-		content = strings.TrimSpace(content)
-		if len(response.Images) > 0 {
-			var imgMarkdowns []string
-			for _, img := range response.Images {
-				imgMarkdowns = append(imgMarkdowns, fmt.Sprintf("![image](%s)", img.URL))
+		message.Content = cleanGeneratedText(response.Text)
+		regenerate = func(repairPrompt string) (string, error) {
+			repaired, err := s.generate(ctx, repairPrompt, opts...)
+			if err != nil {
+				return "", err
 			}
-			if content != "" {
-				content += "\n\n"
-			}
-			content += strings.Join(imgMarkdowns, "\n")
+			return cleanGeneratedText(repaired.Text), nil
 		}
-		message.Content = content
+	}
+
+	// JSON mode applies to a text reply only: when the model called a tool, the
+	// tool bridge has already shaped the reply the client asked for.
+	if jsonMode && len(message.ToolCalls) == 0 && message.Content != "" {
+		message.Content = s.ensureJSONReply(req, prompt, message.Content, jsonSchema, regenerate)
+	}
+
+	// Markdown links after the JSON would break the shape a response_format
+	// client asked for, so images only ride along with JSON mode when there is
+	// no JSON text to corrupt.
+	if !req.HasToolsEnabled() && len(response.Images) > 0 && (!jsonMode || message.Content == "") {
+		message.Content = withImageMarkdown(message.Content, response.Images)
 	}
 
 	message.ReasoningContent = response.ReasoningText
 	message.Canvases = providers.CanvasFiles(response.Canvases)
 
 	// Logic: Construct Response
-	usage := models.Usage{
-		PromptTokens:     0,
-		CompletionTokens: 0,
-		TotalTokens:      0,
-	}
-	if response.Usage != nil {
-		usage.PromptTokens = int(response.Usage.PromptTokens)
-		usage.CompletionTokens = int(response.Usage.CompletionTokens)
-		usage.TotalTokens = int(response.Usage.TotalTokens)
-	}
+	tokens := response.CountTokens(prompt)
 	return &dto.ChatCompletionResponse{
 		ID:             fmt.Sprintf("chatcmpl-%d", time.Now().Unix()),
 		Object:         "chat.completion",
@@ -178,7 +217,11 @@ func (s *OpenAIService) CreateChatCompletion(ctx context.Context, req dto.ChatCo
 				FinishReason: finishReason,
 			},
 		},
-		Usage: usage,
+		Usage: models.Usage{
+			PromptTokens:     tokens.PromptTokens,
+			CompletionTokens: tokens.CompletionTokens,
+			TotalTokens:      tokens.TotalTokens,
+		},
 	}, nil
 }
 
@@ -392,6 +435,21 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 	created := response.Created
 	choice := response.Choices[0]
 
+	// finish sends the final chunk. With stream_options.include_usage, OpenAI
+	// then ends the stream with a chunk that has no choices and the usage.
+	finish := func(final dto.ChatCompletionChunk) {
+		if onEvent(final) && req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
+			onEvent(dto.ChatCompletionChunk{
+				ID:      chunkID,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   response.Model,
+				Choices: []dto.ChunkChoice{},
+				Usage:   &response.Usage,
+			})
+		}
+	}
+
 	// Case 1: Tool Calls
 	if len(choice.Message.ToolCalls) > 0 {
 		for i, tc := range choice.Message.ToolCalls {
@@ -423,7 +481,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 		}
 
 		// Final tool_calls chunk
-		onEvent(dto.ChatCompletionChunk{
+		finish(dto.ChatCompletionChunk{
 			ID:      chunkID,
 			Object:  "chat.completion.chunk",
 			Created: created,
@@ -483,7 +541,7 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 	}
 
 	// Final text chunk; canvases are sent whole, once.
-	onEvent(dto.ChatCompletionChunk{
+	finish(dto.ChatCompletionChunk{
 		ID:      chunkID,
 		Object:  "chat.completion.chunk",
 		Created: created,
@@ -495,8 +553,27 @@ func (s *OpenAIService) CreateChatCompletionStream(ctx context.Context, req dto.
 }
 
 type toolBridgePayload struct {
-	ToolCalls []toolBridgeCall `json:"tool_calls"`
-	Content   string           `json:"content"`
+	ToolCalls []toolBridgeCall  `json:"tool_calls"`
+	Content   toolBridgeContent `json:"content"`
+}
+
+// toolBridgeContent is the bridge reply's "content". It is normally a string,
+// but under response_format the model may put the JSON reply itself there as an
+// object or array, which is kept as its JSON text.
+type toolBridgeContent string
+
+func (c *toolBridgeContent) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*c = toolBridgeContent(text)
+		return nil
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return errors.New("content must be a string, object or array")
+	}
+	*c = toolBridgeContent(trimmed)
+	return nil
 }
 
 type toolBridgeCall struct {
@@ -566,7 +643,14 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	b.WriteString("You are an OpenAI-compatible assistant running behind a bridge to Gemini web.\n")
 	b.WriteString("You MUST respond with JSON only. Do not output markdown code fences.\n")
 	b.WriteString("Output schema:\n")
-	b.WriteString("{\"tool_calls\":[{\"name\":\"<tool_name>\",\"arguments\":{\"<parameter>\":<value>}}]} OR {\"content\":\"<assistant_text>\"}\n")
+	b.WriteString("{\"tool_calls\":[{\"name\":\"<tool_name>\",\"arguments\":{\"<parameter>\":<value>}}]} OR ")
+	if _, jsonMode := req.JSONResponseRequested(); jsonMode {
+		// The reply itself is JSON: show it as a value, not a string, or the
+		// model follows this template and writes prose.
+		b.WriteString("{\"content\":<reply_json>}\n")
+	} else {
+		b.WriteString("{\"content\":\"<assistant_text>\"}\n")
+	}
 	b.WriteString("Rules:\n")
 	b.WriteString("- Use only tool names listed below.\n")
 	b.WriteString("- arguments must be a JSON object that sets every required parameter of the tool's parameters schema.\n")
@@ -586,6 +670,15 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	}
 	if toolChoiceMode == "none" {
 		b.WriteString("- Tool calling disabled. Return only {\"content\":\"...\"}.\n")
+	}
+	if schema, jsonMode := req.JSONResponseRequested(); jsonMode {
+		if len(schema) > 0 {
+			b.WriteString("- Without a tool call, \"content\" must be the reply itself as a JSON value (not a string) matching this JSON Schema: ")
+			b.Write(schema)
+			b.WriteString(". Set every required property.\n")
+		} else {
+			b.WriteString("- Without a tool call, \"content\" must be the reply itself as a JSON object (not a string), with the fields the conversation asks for.\n")
+		}
 	}
 
 	b.WriteString("Available tools:\n")
@@ -672,7 +765,7 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 		return nil, "", errors.New("no tool call named one of the requested tools")
 	}
 
-	content := strings.TrimSpace(payload.Content)
+	content := strings.TrimSpace(string(payload.Content))
 	if content == "" && len(calls) == 0 {
 		content = strings.TrimSpace(text)
 	}
@@ -712,7 +805,7 @@ func unmarshalToolBridgePayload(text string) (toolBridgePayload, bool) {
 			return toolBridgePayload{}, false
 		}
 	}
-	if len(payload.ToolCalls) == 0 && strings.TrimSpace(payload.Content) == "" {
+	if len(payload.ToolCalls) == 0 && strings.TrimSpace(string(payload.Content)) == "" {
 		return toolBridgePayload{}, false
 	}
 	return payload, true
