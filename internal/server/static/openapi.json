@@ -6,7 +6,6 @@
         "contact": {},
         "version": "1.0"
     },
-    "host": "localhost:4981",
     "basePath": "/",
     "paths": {
         "/claude/v1/messages": {
