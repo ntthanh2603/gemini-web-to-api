@@ -790,6 +790,7 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		parseDuration := time.Since(parseStart)
 
 		if parseErr != nil {
+			parseErr = annotateAttachmentError(parseErr, len(uploadedFiles))
 			lastErr = parseErr
 			c.log.Warn("Failed to parse response, will retry",
 				zap.Error(parseErr),
@@ -1122,7 +1123,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 
 				// Check for BardErrorInfo error block
 				if errStr := extractBardError(itemArray); errStr != "" {
-					return nil, errors.New(errStr)
+					return nil, &bardError{msg: errStr}
 				}
 
 				if len(itemArray) < 3 {
@@ -1375,6 +1376,26 @@ func usageCount(m map[string]any, key string) int64 {
 		return int64(v)
 	}
 	return 0
+}
+
+// bardError is an error block (BardErrorInfo) that Gemini Web returned in
+// place of an answer.
+type bardError struct {
+	msg string
+}
+
+func (e *bardError) Error() string { return e.msg }
+
+// annotateAttachmentError adds a hint to a Gemini error block when the request
+// carried uploaded files: Gemini accepts any bytes at upload time and only
+// fails (typically with code [13 1100]) when it cannot read the file while
+// generating, which the generic session/rate-limit hint does not explain.
+func annotateAttachmentError(err error, uploadedFiles int) error {
+	var be *bardError
+	if uploadedFiles == 0 || !errors.As(err, &be) {
+		return err
+	}
+	return fmt.Errorf("%w The request included %d uploaded file(s); an invalid, truncated or unsupported file (e.g. bad base64 or a non-image declared as an image) also causes this error.", err, uploadedFiles)
 }
 
 // extractBardError recursively searches for BardErrorInfo and extracts codes/messages
