@@ -398,3 +398,31 @@ func TestInitFailsWhenConfigAndCacheStaleAndPreservesCache(t *testing.T) {
 		t.Fatalf("cache file missing or empty after failed init: %v", statErr)
 	}
 }
+
+func TestAnnotateAttachmentErrorHintsAtInvalidFiles(t *testing.T) {
+	client := &Client{log: zap.NewNop()}
+	_, err := client.parseResponse(`)]}'
+
+	[["wrb.fr",null,null,null,null,[13,null,[["type.googleapis.com/assistant.boq.bard.application.BardErrorInfo",[1100]]]]]]`)
+	if err == nil {
+		t.Fatal("expected a BardErrorInfo error")
+	}
+
+	if got := annotateAttachmentError(err, 0); got != err {
+		t.Fatalf("text-only requests must keep the original error, got: %v", got)
+	}
+
+	got := annotateAttachmentError(err, 1)
+	if !strings.Contains(got.Error(), "BardErrorInfo code [13 1100]") || !strings.Contains(got.Error(), "unsupported file") {
+		t.Fatalf("expected original code plus a file hint, got: %v", got)
+	}
+	var be *bardError
+	if !errors.As(got, &be) {
+		t.Fatal("annotated error must still unwrap to *bardError")
+	}
+
+	other := errors.New("generate failed with status: 400")
+	if annotateAttachmentError(other, 1) != other {
+		t.Fatal("non-Gemini errors must not be annotated")
+	}
+}
