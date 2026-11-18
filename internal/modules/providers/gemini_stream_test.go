@@ -131,6 +131,7 @@ func TestIsErrorReply(t *testing.T) {
 	}{
 		{"I seem to be encountering an error. Can I try something else for you?", true},
 		{"I encountered an error doing what you asked. Could you try again?", true},
+		{"I'm having a hard time fulfilling your request. Can I help you with something else instead?", true},
 		{"  i seem to be encountering an error. can i try something else for you?\n", true},
 		{"OK", false},
 		{"", false},
