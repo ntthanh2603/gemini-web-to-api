@@ -53,6 +53,12 @@ type Client struct {
 	cachedModels     []geminiModel
 	defaultTemporary bool
 
+	// firstResponseTimeout and streamIdleTimeout bound a StreamGenerate read;
+	// zero disables them. errorReplies are canned failure answers to retry.
+	firstResponseTimeout time.Duration
+	streamIdleTimeout    time.Duration
+	errorReplies         []string
+
 	// refreshSessionTokenFn is a test seam for Init; nil uses the real
 	// refreshSessionToken implementation.
 	refreshSessionTokenFn func(ctx context.Context) error
@@ -144,6 +150,9 @@ func newClient(cfg *configs.Config, log *zap.Logger, validate func(ctx context.C
 		maxRetries:             cfg.Gemini.MaxRetries,
 		log:                    log,
 		defaultTemporary:       cfg.Gemini.Temporary,
+		firstResponseTimeout:   time.Duration(cfg.Gemini.FirstResponseTimeoutSeconds) * time.Second,
+		streamIdleTimeout:      time.Duration(cfg.Gemini.StreamIdleTimeoutSeconds) * time.Second,
+		errorReplies:           append(append([]string(nil), defaultErrorReplies...), cfg.Gemini.ErrorReplies...),
 		sessionValidator:       validate,
 		envCookieHash:          cookieHeaderHash(cfg.Gemini.Cookies),
 	}
@@ -777,10 +786,22 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			return nil, lastErr
 		}
 
-		respBytes, err := io.ReadAll(httpResp.Body)
-		_ = httpResp.Body.Close()
+		// Video and music jobs may stay silent for minutes; keep them unbounded.
+		firstResponseTimeout, streamIdleTimeout := c.firstResponseTimeout, c.streamIdleTimeout
+		if config.Video != nil || config.Music != nil {
+			firstResponseTimeout, streamIdleTimeout = 0, 0
+		}
+		respBytes, err := readGenerateStream(ctx, httpResp.Body, firstResponseTimeout, streamIdleTimeout, c.streamDebugLogger())
 		if err != nil {
-			lastErr = fmt.Errorf("failed to read generate response: %w", err)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			lastErr = annotateAttachmentError(err, len(uploadedFiles))
+			c.log.Warn("Gemini stream failed, retrying like Redo",
+				zap.Error(err),
+				zap.Int("attempt", attempt),
+				zap.Duration("elapsed", time.Since(httpStart)),
+			)
 			continue
 		}
 		respBody := string(respBytes)
@@ -794,6 +815,14 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			lastErr = parseErr
 			c.log.Warn("Failed to parse response, will retry",
 				zap.Error(parseErr),
+				zap.Int("attempt", attempt),
+			)
+			continue
+		}
+		if isErrorReply(result.Text, c.errorReplies) {
+			lastErr = fmt.Errorf("%w: %q", errGeminiErrorReply, strings.TrimSpace(result.Text))
+			c.log.Warn("Gemini returned a canned error reply, retrying like Redo",
+				zap.String("reply", strings.TrimSpace(result.Text)),
 				zap.Int("attempt", attempt),
 			)
 			continue

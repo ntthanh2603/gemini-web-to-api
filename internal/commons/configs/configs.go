@@ -33,6 +33,15 @@ type GeminiConfig struct {
 	MaxRetries          int
 	Cookies             string
 	Temporary           bool
+	// FirstResponseTimeoutSeconds aborts and retries a generation when Gemini
+	// sends no answer within this many seconds (0 disables).
+	FirstResponseTimeoutSeconds int
+	// StreamIdleTimeoutSeconds aborts and retries a generation whose stream goes
+	// quiet for this many seconds after the answer started (0 disables).
+	StreamIdleTimeoutSeconds int
+	// ErrorReplies are extra canned failure replies (besides the built-in ones)
+	// that are retried instead of being returned as an answer.
+	ErrorReplies []string
 	// CookieAPIKey enables the authenticated POST /admin/cookies endpoint used
 	// by browser extensions to push a fresh session. When empty the route is
 	// not registered at all.
@@ -106,6 +115,13 @@ func New() (*Config, error) {
 	}
 	cfg.Gemini.MaxRetries = getEnvInt("GEMINI_MAX_RETRIES", defaultGeminiMaxRetries)
 	cfg.Gemini.Temporary = getEnvBool("GEMINI_TEMPORARY", false)
+	cfg.Gemini.FirstResponseTimeoutSeconds = max(getEnvInt("GEMINI_FIRST_RESPONSE_TIMEOUT_SECONDS", 0), 0)
+	cfg.Gemini.StreamIdleTimeoutSeconds = max(getEnvInt("GEMINI_STREAM_IDLE_TIMEOUT_SECONDS", 0), 0)
+	for _, reply := range strings.Split(getEnv("GEMINI_ERROR_REPLIES", ""), "|") {
+		if reply = strings.TrimSpace(reply); reply != "" {
+			cfg.Gemini.ErrorReplies = append(cfg.Gemini.ErrorReplies, reply)
+		}
+	}
 	if cfg.Gemini.AuthUser != "" {
 		if n, err := strconv.Atoi(cfg.Gemini.AuthUser); err != nil || n < 0 {
 			return nil, fmt.Errorf("invalid GEMINI_AUTH_USER value: %q (must be a non-negative account slot)", cfg.Gemini.AuthUser)
