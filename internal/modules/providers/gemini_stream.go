@@ -30,6 +30,7 @@ var errGeminiErrorReply = errors.New("gemini replied with a canned error message
 // matches one of these, so answers that merely mention an error are kept.
 var defaultErrorReplies = []string{
 	"I seem to be encountering an error. Can I try something else for you?",
+	"I encountered an error doing what you asked. Could you try again?",
 	"Something went wrong. Please try again.",
 	"Something went wrong.",
 }

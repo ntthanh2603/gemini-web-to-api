@@ -130,6 +130,7 @@ func TestIsErrorReply(t *testing.T) {
 		want bool
 	}{
 		{"I seem to be encountering an error. Can I try something else for you?", true},
+		{"I encountered an error doing what you asked. Could you try again?", true},
 		{"  i seem to be encountering an error. can i try something else for you?\n", true},
 		{"OK", false},
 		{"", false},
