@@ -22,6 +22,11 @@ import (
 // this as a client error (HTTP 400), rather than an upstream service failure.
 type ModelSelectionError struct {
 	Message string
+	// Unavailable marks the case where the session lists no models at all
+	// (expired or revoked cookies). That is a server-side outage, not a bad
+	// request, so callers should answer 503 and let load balancers or clients
+	// try another instance.
+	Unavailable bool
 }
 
 func (e *ModelSelectionError) Error() string { return e.Message }
@@ -344,7 +349,7 @@ func geminiModelNames(modelID, category, display string) (string, []string) {
 
 func resolveGeminiModel(requested string, models []geminiModel) (geminiModel, error) {
 	if len(models) == 0 {
-		return geminiModel{}, &ModelSelectionError{Message: "no Gemini models available; refresh the authenticated session"}
+		return geminiModel{}, &ModelSelectionError{Message: "no Gemini models available; refresh the authenticated session", Unavailable: true}
 	}
 	requested = strings.ToLower(strings.TrimSpace(requested))
 	if requested == "" {
