@@ -221,6 +221,10 @@ Image, video and music generation report no token counts.
 | `GEMINI_TEMPORARY`        | ❌ No    | `false` | Enable stateless/incognito mode for all requests                 |
 | `GEMINI_VIDEO_TIMEOUT_MINUTES` | ❌ No | `10` | Minutes a video job may take (maximum `60`); only one video job runs at a time |
 | `GEMINI_COOKIE_API_KEY`   | ❌ No    | —       | Bearer token that enables `POST /admin/cookies`, see below       |
+| `GEMINI_FIRST_RESPONSE_TIMEOUT_SECONDS` | ❌ No | `180` | Retry (like the web UI's Redo) when no answer arrives within this many seconds; `0` disables |
+| `GEMINI_STREAM_IDLE_TIMEOUT_SECONDS` | ❌ No | `60` | Retry when the stream goes quiet this long after the answer started; `0` disables |
+| `GEMINI_ERROR_REPLIES`    | ❌ No    | —       | Extra `\|`-separated canned failure replies to retry instead of returning |
+| `GEMINI_DEBUG_STREAM`     | ❌ No    | —       | Set to `1` to log every StreamGenerate chunk (for capturing new Gemini Web failure shapes) |
 | `PORT`                    | ❌ No    | `4981`  | Server port                                                      |
 | `RATE_LIMIT_ENABLED`      | ❌ No    | `false` | Enable or disable rate limiting                                  |
 | `RATE_LIMIT_WINDOW_MS`    | ❌ No    | `60000` | Rate limit time window in milliseconds                           |
