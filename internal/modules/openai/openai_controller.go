@@ -81,6 +81,10 @@ func (h *OpenAIController) HandleModel(c fiber.Ctx) error {
 func (h *OpenAIController) logRequestError(msg string, err error, model string) {
 	var modelErr *providers.ModelSelectionError
 	if errors.As(err, &modelErr) {
+		if modelErr.Unavailable {
+			h.log.Warn(msg, zap.Error(err), zap.String("model", model))
+			return
+		}
 		h.log.Info(msg, zap.Error(err), zap.String("model", model))
 		return
 	}
@@ -90,6 +94,9 @@ func (h *OpenAIController) logRequestError(msg string, err error, model string) 
 func openAIRequestError(c fiber.Ctx, err error) error {
 	var modelErr *providers.ModelSelectionError
 	if errors.As(err, &modelErr) {
+		if modelErr.Unavailable {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(utils.ErrorToResponse(err, "service_unavailable"))
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
 	}
 	if errors.Is(err, ErrInvalidToolCall) {

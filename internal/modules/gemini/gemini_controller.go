@@ -373,6 +373,8 @@ func videoRequestError(c fiber.Ctx, err error) error {
 	var validationErr *providers.VideoValidationError
 	var modelErr *providers.ModelSelectionError
 	switch {
+	case errors.As(err, &modelErr) && modelErr.Unavailable:
+		return c.Status(fiber.StatusServiceUnavailable).JSON(common.ErrorToResponse(err, "service_unavailable"))
 	case errors.As(err, &validationErr), errors.As(err, &modelErr):
 		return c.Status(fiber.StatusBadRequest).JSON(common.ErrorToResponse(err, "invalid_request_error"))
 	case errors.Is(err, providers.ErrVideoBusy):
