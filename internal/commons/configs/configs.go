@@ -34,10 +34,10 @@ type GeminiConfig struct {
 	Cookies             string
 	Temporary           bool
 	// FirstResponseTimeoutSeconds aborts and retries a generation when Gemini
-	// sends no answer within this many seconds (0 disables).
+	// sends no answer within this many seconds (default 180, 0 disables).
 	FirstResponseTimeoutSeconds int
 	// StreamIdleTimeoutSeconds aborts and retries a generation whose stream goes
-	// quiet for this many seconds after the answer started (0 disables).
+	// quiet for this many seconds after the answer started (default 60, 0 disables).
 	StreamIdleTimeoutSeconds int
 	// ErrorReplies are extra canned failure replies (besides the built-in ones)
 	// that are retried instead of being returned as an answer.
@@ -75,7 +75,11 @@ const (
 	defaultGeminiVideoTimeoutMinutes = 10
 	maxGeminiVideoTimeoutMinutes     = 60
 	defaultGeminiMaxRetries          = 3
-	defaultLogLevel                  = "info"
+	// Generous enough for slow thinking models, yet far below the 5-minute
+	// HTTP client timeout a stalled Gemini Web stream otherwise runs into.
+	defaultGeminiFirstResponseTimeoutSeconds = 180
+	defaultGeminiStreamIdleTimeoutSeconds    = 60
+	defaultLogLevel                          = "info"
 )
 
 func New() (*Config, error) {
@@ -115,8 +119,9 @@ func New() (*Config, error) {
 	}
 	cfg.Gemini.MaxRetries = getEnvInt("GEMINI_MAX_RETRIES", defaultGeminiMaxRetries)
 	cfg.Gemini.Temporary = getEnvBool("GEMINI_TEMPORARY", false)
-	cfg.Gemini.FirstResponseTimeoutSeconds = max(getEnvInt("GEMINI_FIRST_RESPONSE_TIMEOUT_SECONDS", 0), 0)
-	cfg.Gemini.StreamIdleTimeoutSeconds = max(getEnvInt("GEMINI_STREAM_IDLE_TIMEOUT_SECONDS", 0), 0)
+	// Unset or invalid values use the defaults; 0 or a negative value disables.
+	cfg.Gemini.FirstResponseTimeoutSeconds = max(getEnvInt("GEMINI_FIRST_RESPONSE_TIMEOUT_SECONDS", defaultGeminiFirstResponseTimeoutSeconds), 0)
+	cfg.Gemini.StreamIdleTimeoutSeconds = max(getEnvInt("GEMINI_STREAM_IDLE_TIMEOUT_SECONDS", defaultGeminiStreamIdleTimeoutSeconds), 0)
 	for _, reply := range strings.Split(getEnv("GEMINI_ERROR_REPLIES", ""), "|") {
 		if reply = strings.TrimSpace(reply); reply != "" {
 			cfg.Gemini.ErrorReplies = append(cfg.Gemini.ErrorReplies, reply)
