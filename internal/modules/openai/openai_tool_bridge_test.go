@@ -253,3 +253,32 @@ func TestChatCompletionsReturnBadGatewayForInvalidToolCall(t *testing.T) {
 		t.Errorf("error body does not say what was wrong: %s", body)
 	}
 }
+
+func TestToolBridgeStripsAutoLinkedURLsInArguments(t *testing.T) {
+	service := &OpenAIService{log: zap.NewNop()}
+	req := dto.ChatCompletionRequest{Tools: []dto.ToolDefinition{{
+		Type: "function",
+		Function: dto.ToolFunctionDefinition{
+			Name:       "write_file",
+			Parameters: json.RawMessage(`{"type":"object","properties":{"filename":{"type":"string"},"content":{"type":"string"}},"required":["filename","content"]}`),
+		},
+	}}}
+
+	reply := `{"tool_calls":[{"name":"write_file","arguments":{"filename":"bench.py","content":"BASE_URL = \"[https://api.example.com/v1](https://api.example.com/v1)\"\n"}}]}`
+	calls, _, err := service.parseToolBridgeOutput(req, reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("got %d tool calls, want 1", len(calls))
+	}
+	want := `{"content":"BASE_URL = \"https://api.example.com/v1\"\n","filename":"bench.py"}`
+	var gotObj, wantObj map[string]string
+	if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &gotObj); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal([]byte(want), &wantObj)
+	if gotObj["content"] != wantObj["content"] || gotObj["filename"] != wantObj["filename"] {
+		t.Fatalf("arguments = %s, want %s", calls[0].Function.Arguments, want)
+	}
+}

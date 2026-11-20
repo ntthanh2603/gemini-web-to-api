@@ -709,6 +709,7 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 // the model tried to call a tool but the call cannot be used (unknown tool,
 // malformed or incomplete arguments), so it must not reach the client.
 func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, text string) ([]dto.ChatCompletionToolCall, string, error) {
+	text = utils.StripAutoLinkedURLs(text)
 	cleaned := utils.StripCodeFence(text)
 	if cleaned == "" {
 		return nil, "", nil

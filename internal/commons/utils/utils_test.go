@@ -275,6 +275,31 @@ func TestStripCitationArtifacts(t *testing.T) {
 			input: "中文句子 [cite: 1]。下一句 [cite: 2]！",
 			want:  "中文句子。下一句！",
 		},
+		{
+			name:  "Redundant Gemini Web auto-linked URL inside JSON string",
+			input: `{"filename":"bench.py","content":"BASE_URL = \"[https://api.example.com/v1](https://api.example.com/v1)\"\n"}`,
+			want:  `{"filename":"bench.py","content":"BASE_URL = \"https://api.example.com/v1\"\n"}`,
+		},
+		{
+			name:  "Redundant auto-linked URL with JSON-escaped slashes",
+			input: `{"url":"[https:\/\/example.com\/v1](https:\/\/example.com\/v1)"}`,
+			want:  `{"url":"https:\/\/example.com\/v1"}`,
+		},
+		{
+			name:  "Redundant auto-linked URL containing balanced parentheses",
+			input: "See [https://en.wikipedia.org/wiki/Go_(programming_language)](https://en.wikipedia.org/wiki/Go_(programming_language)).",
+			want:  "See https://en.wikipedia.org/wiki/Go_(programming_language).",
+		},
+		{
+			name:  "Redundant auto-linked URL with trailing slash added on href",
+			input: "Endpoint: `[https://example.com](https://example.com/)`",
+			want:  "Endpoint: `https://example.com`",
+		},
+		{
+			name:  "Negative: image markdown and distinct link targets survive",
+			input: "![https://example.com/a.png](https://example.com/a.png) [example.com](https://example.com) [https://a.example](https://b.example)",
+			want:  "![https://example.com/a.png](https://example.com/a.png) [example.com](https://example.com) [https://a.example](https://b.example)",
+		},
 	}
 
 	for _, tt := range tests {
