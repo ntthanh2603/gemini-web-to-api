@@ -348,16 +348,18 @@ func StripCodeFence(text string) string {
 	return trimmed
 }
 
-// StripCitationArtifacts removes the citation and code-event artifacts that Gemini's
-// web UI injects into response text. It is deliberately narrow: only "[cite: N]" /
-// "[cite: N, M]" lists, "[cite_start]" markers and "?code_reference..." /
-// "?code_stdout..." suffixes on markdown code-fence opening lines are removed, so
-// ordinary prose (including literal brackets and unfenced query strings) is left
-// untouched.
+// StripCitationArtifacts removes the citation, code-event and redundant URL
+// auto-link artifacts that Gemini's web UI injects into response text. It is
+// deliberately narrow: only "[cite: N]" / "[cite: N, M]" lists, "[cite_start]"
+// markers, "?code_reference..." / "?code_stdout..." suffixes on markdown
+// code-fence opening lines, and redundant "[http(s)://...](http(s)://...)"
+// auto-links are unwrapped, so ordinary prose and intentional markdown links
+// are left untouched.
 func StripCitationArtifacts(text string) string {
 	if text == "" {
 		return text
 	}
+	text = StripAutoLinkedURLs(text)
 	if !strings.Contains(text, "[cite") && !strings.Contains(text, "?code_") {
 		return text
 	}
@@ -382,6 +384,115 @@ func StripCitationArtifacts(text string) string {
 		lines[i] = m[1]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// StripAutoLinkedURLs unwraps redundant "[url](url)" markdown links that Gemini
+// Web's backend injects around bare http(s) URLs in unfenced text, including
+// inside raw JSON tool-call arguments and JSON-mode replies. Image links
+// ("![alt](url)"), named links ("[docs](https://...)") and links whose label
+// and target URL differ are left untouched.
+func StripAutoLinkedURLs(text string) string {
+	if !strings.Contains(text, "](http") {
+		return text
+	}
+
+	var b strings.Builder
+	last := 0
+	for i := 0; i < len(text); i++ {
+		if text[i] != '[' || (i > 0 && text[i-1] == '!') {
+			continue
+		}
+		labelStart := i + 1
+		if !hasHTTPPrefix(text[labelStart:]) {
+			continue
+		}
+
+		closeBracket := -1
+		for j := labelStart; j < len(text); j++ {
+			ch := text[j]
+			if ch == ']' {
+				closeBracket = j
+				break
+			}
+			if ch <= ' ' || ch == '[' || ch == '"' || hasJSONControlEscape(text, j) {
+				break
+			}
+		}
+		if closeBracket < 0 || closeBracket+1 >= len(text) || text[closeBracket+1] != '(' {
+			continue
+		}
+
+		hrefStart := closeBracket + 2
+		depth := 1
+		closeParen := -1
+		for j := hrefStart; j < len(text); j++ {
+			ch := text[j]
+			if ch <= ' ' || ch == '"' || hasJSONControlEscape(text, j) {
+				break
+			}
+			switch ch {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					closeParen = j
+				}
+			}
+			if closeParen >= 0 {
+				break
+			}
+		}
+		if closeParen < 0 {
+			continue
+		}
+
+		label := text[labelStart:closeBracket]
+		href := text[hrefStart:closeParen]
+		if !isRedundantAutoLinkedURL(label, href) {
+			continue
+		}
+
+		if b.Cap() == 0 {
+			b.Grow(len(text))
+		}
+		b.WriteString(text[last:i])
+		b.WriteString(label)
+		last = closeParen + 1
+		i = closeParen
+	}
+
+	if last == 0 {
+		return text
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+func hasHTTPPrefix(s string) bool {
+	return strings.HasPrefix(s, "https://") ||
+		strings.HasPrefix(s, "http://") ||
+		strings.HasPrefix(s, `https:\/\/`) ||
+		strings.HasPrefix(s, `http:\/\/`)
+}
+
+// hasJSONControlEscape reports whether s[idx:] starts a JSON escape sequence
+// other than an escaped forward slash ("\/"), such as \" or \n, which ends or
+// breaks a URL inside a JSON string literal.
+func hasJSONControlEscape(s string, idx int) bool {
+	if s[idx] != '\\' {
+		return false
+	}
+	return idx+1 >= len(s) || s[idx+1] != '/'
+}
+
+func isRedundantAutoLinkedURL(label, href string) bool {
+	if !hasHTTPPrefix(label) || !hasHTTPPrefix(href) {
+		return false
+	}
+	normLabel := strings.TrimSuffix(strings.ReplaceAll(label, `\/`, "/"), "/")
+	normHref := strings.TrimSuffix(strings.ReplaceAll(href, `\/`, "/"), "/")
+	return normLabel != "http:" && normLabel != "https:" && normLabel == normHref
 }
 
 // removeInlineMarkers deletes every match of re from text. When a marker sits

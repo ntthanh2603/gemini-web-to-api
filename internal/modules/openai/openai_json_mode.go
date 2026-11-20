@@ -62,7 +62,7 @@ func repairJSONPrompt(basePrompt string, schema json.RawMessage, cause error) st
 // a whole never yields one of its nested objects as the answer. Candidates are
 // checked as they are found, stopping at the first valid one.
 func extractJSONReply(text string) string {
-	trimmed := strings.TrimSpace(text)
+	trimmed := strings.TrimSpace(utils.StripAutoLinkedURLs(text))
 	if trimmed == "" {
 		return ""
 	}
