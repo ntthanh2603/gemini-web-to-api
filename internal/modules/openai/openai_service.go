@@ -638,25 +638,36 @@ func (s *OpenAIService) generateToolBridge(ctx context.Context, req dto.ChatComp
 	return nil, nil, "", fmt.Errorf("%w after %d attempts: %v", ErrInvalidToolCall, maxToolBridgeAttempts, lastErr)
 }
 
+// buildToolBridgePrompt asks Gemini for the next step of the client's agent as
+// bridge JSON. Gemini web refuses a prompt that tells it it is an API or that
+// it has tools ("I don't have terminal access"), so the prompt is written in the
+// third person: the client program, not Gemini, executes the functions, and
+// Gemini only writes the agent's next message. The output rule is repeated after
+// the conversation, because a long conversation pushes the header out of focus.
 func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, basePrompt string) string {
+	_, jsonMode := req.JSONResponseRequested()
+	toolChoiceMode := req.ToolChoiceMode()
+
 	var b strings.Builder
-	b.WriteString("You are an OpenAI-compatible assistant running behind a bridge to Gemini web.\n")
-	b.WriteString("You MUST respond with JSON only. Do not output markdown code fences.\n")
-	b.WriteString("Output schema:\n")
-	b.WriteString("{\"tool_calls\":[{\"name\":\"<tool_name>\",\"arguments\":{\"<parameter>\":<value>}}]} OR ")
-	if _, jsonMode := req.JSONResponseRequested(); jsonMode {
+	b.WriteString("Task: write the next message of a software agent, as JSON only.\n\n")
+	b.WriteString("The agent is a program running on the user's own computer. The program, not you, executes the functions listed below and sends their results back. ")
+	b.WriteString("Your only job is to read the function list and the conversation, then write the agent's next message as ONE JSON object. You are not asked to run anything yourself.\n\n")
+	b.WriteString("Output exactly one of these shapes and nothing else (no markdown code fences, no text outside the JSON):\n")
+	b.WriteString("{\"tool_calls\":[{\"name\":\"<function_name>\",\"arguments\":{\"<parameter>\":<value>}}]}\n")
+	if jsonMode {
 		// The reply itself is JSON: show it as a value, not a string, or the
 		// model follows this template and writes prose.
 		b.WriteString("{\"content\":<reply_json>}\n")
 	} else {
-		b.WriteString("{\"content\":\"<assistant_text>\"}\n")
+		b.WriteString("{\"content\":\"<reply text to show the user>\"}\n")
 	}
-	b.WriteString("Rules:\n")
-	b.WriteString("- Use only tool names listed below.\n")
-	b.WriteString("- arguments must be a JSON object that sets every required parameter of the tool's parameters schema.\n")
+	b.WriteString("\nRules:\n")
+	b.WriteString("- Choose \"tool_calls\" when calling one or more of the functions would help with the latest user message or continue the task; otherwise choose \"content\".\n")
+	b.WriteString("- Use only function names listed below.\n")
+	b.WriteString("- arguments must be a JSON object that sets every required parameter of the function's parameters schema.\n")
 	b.WriteString("- Escape newlines and double quotes inside JSON strings as \\n and \\\".\n")
+	b.WriteString("- Earlier calls appear in the conversation as [Call Tool: ...] and their results as [Tool Result for ID ...]; use those results instead of repeating a call.\n")
 
-	toolChoiceMode := req.ToolChoiceMode()
 	if toolChoiceMode == "required" {
 		b.WriteString("- You must return at least one tool call.\n")
 	}
@@ -671,7 +682,7 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	if toolChoiceMode == "none" {
 		b.WriteString("- Tool calling disabled. Return only {\"content\":\"...\"}.\n")
 	}
-	if schema, jsonMode := req.JSONResponseRequested(); jsonMode {
+	if schema, ok := req.JSONResponseRequested(); ok {
 		if len(schema) > 0 {
 			b.WriteString("- Without a tool call, \"content\" must be the reply itself as a JSON value (not a string) matching this JSON Schema: ")
 			b.Write(schema)
@@ -681,7 +692,7 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 		}
 	}
 
-	b.WriteString("Available tools:\n")
+	b.WriteString("\nFunctions available to the agent:\n")
 	for _, t := range req.Tools {
 		if !strings.EqualFold(t.Type, "function") || strings.TrimSpace(t.Function.Name) == "" {
 			continue
@@ -699,8 +710,9 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\nConversation:\n")
+	b.WriteString("\nConversation so far:\n")
 	b.WriteString(basePrompt)
+	b.WriteString("\n\n(End of conversation.) Write the agent's next message now, as one JSON object in one of the shapes above and nothing else.")
 	return b.String()
 }
 
