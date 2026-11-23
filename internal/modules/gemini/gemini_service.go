@@ -341,6 +341,7 @@ func (s *GeminiService) buildToolBridgePrompt(req dto.GeminiGenerateRequest, bas
 }
 
 func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, text string) ([]dto.FunctionCall, string) {
+	text = utils.StripAutoLinkedURLs(text)
 	cleaned := utils.StripCodeFence(text)
 	if cleaned == "" {
 		return nil, ""
@@ -353,9 +354,12 @@ func (s *GeminiService) parseToolBridgeOutput(req dto.GeminiGenerateRequest, tex
 	}
 
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
-		obj := utils.ExtractFirstJSONObject(text)
-		if obj == "" || json.Unmarshal([]byte(obj), &payload) != nil {
-			return nil, text
+		if err := json.Unmarshal([]byte(utils.EscapeJSONStringControlChars(cleaned)), &payload); err != nil {
+			obj := utils.ExtractFirstJSONObject(text)
+			if obj == "" || (json.Unmarshal([]byte(obj), &payload) != nil &&
+				json.Unmarshal([]byte(utils.EscapeJSONStringControlChars(obj)), &payload) != nil) {
+				return nil, text
+			}
 		}
 	}
 

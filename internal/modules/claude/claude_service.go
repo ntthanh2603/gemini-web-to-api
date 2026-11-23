@@ -277,6 +277,7 @@ func (s *ClaudeService) buildToolBridgePrompt(req dto.MessageRequest, basePrompt
 }
 
 func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text string) ([]dto.ConfigContent, string) {
+	text = common.StripAutoLinkedURLs(text)
 	cleaned := common.StripCodeFence(text)
 	if cleaned == "" {
 		return nil, ""
@@ -293,9 +294,12 @@ func (s *ClaudeService) parseToolBridgeOutput(req dto.MessageRequest, text strin
 	}
 
 	if err := json.Unmarshal([]byte(cleaned), &payload); err != nil {
-		obj := common.ExtractFirstJSONObject(text)
-		if obj == "" || json.Unmarshal([]byte(obj), &payload) != nil {
-			return nil, text
+		if err := json.Unmarshal([]byte(common.EscapeJSONStringControlChars(cleaned)), &payload); err != nil {
+			obj := common.ExtractFirstJSONObject(text)
+			if obj == "" || (json.Unmarshal([]byte(obj), &payload) != nil &&
+				json.Unmarshal([]byte(common.EscapeJSONStringControlChars(obj)), &payload) != nil) {
+				return nil, text
+			}
 		}
 	}
 
