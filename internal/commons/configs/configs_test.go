@@ -73,3 +73,34 @@ func TestNewDerivesAuthenticationFromGeminiCookies(t *testing.T) {
 		t.Fatalf("incorrect Gemini config derived from full Cookie header: %#v", cfg.Gemini)
 	}
 }
+
+func TestNewStreamTimeouts(t *testing.T) {
+	cases := []struct {
+		value     string
+		wantFirst int
+		wantIdle  int
+	}{
+		{"", defaultGeminiFirstResponseTimeoutSeconds, defaultGeminiStreamIdleTimeoutSeconds},
+		{"abc", defaultGeminiFirstResponseTimeoutSeconds, defaultGeminiStreamIdleTimeoutSeconds},
+		{"0", 0, 0},
+		{"-5", 0, 0},
+		{"30", 30, 30},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			t.Setenv("GEMINI_COOKIES", "__Secure-1PSID=psid; __Secure-1PSIDTS=psidts")
+			t.Setenv("GEMINI_FIRST_RESPONSE_TIMEOUT_SECONDS", c.value)
+			t.Setenv("GEMINI_STREAM_IDLE_TIMEOUT_SECONDS", c.value)
+			cfg, err := New()
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			if cfg.Gemini.FirstResponseTimeoutSeconds != c.wantFirst {
+				t.Errorf("FirstResponseTimeoutSeconds = %d, want %d", cfg.Gemini.FirstResponseTimeoutSeconds, c.wantFirst)
+			}
+			if cfg.Gemini.StreamIdleTimeoutSeconds != c.wantIdle {
+				t.Errorf("StreamIdleTimeoutSeconds = %d, want %d", cfg.Gemini.StreamIdleTimeoutSeconds, c.wantIdle)
+			}
+		})
+	}
+}
