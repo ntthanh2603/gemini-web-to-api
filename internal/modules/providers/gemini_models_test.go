@@ -392,3 +392,11 @@ func TestFetchGeminiModelsReportsFailuresWithoutSessionValues(t *testing.T) {
 		t.Fatalf("transport error must omit session query: %v", err)
 	}
 }
+
+func TestResolveGeminiModelWithoutModelsIsUnavailable(t *testing.T) {
+	_, err := resolveGeminiModel("gemini-quick-answers", nil)
+	var modelErr *ModelSelectionError
+	if !errors.As(err, &modelErr) || !modelErr.Unavailable {
+		t.Fatalf("err = %#v, want ModelSelectionError with Unavailable", err)
+	}
+}
