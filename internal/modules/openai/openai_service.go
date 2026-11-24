@@ -633,7 +633,7 @@ func (s *OpenAIService) generateToolBridge(ctx context.Context, req dto.ChatComp
 			zap.String("model", req.Model), zap.Error(err))
 		s.log.Debug("Unusable tool bridge reply", zap.String("text", response.Text))
 		attemptPrompt = prompt + "\n\nYour previous reply could not be used: " + err.Error() +
-			". Reply again with JSON only, exactly matching the output schema above, and set every required argument."
+			". Reply again with one JSON object inside a single ```json code fence, exactly matching the output schema above, and set every required argument."
 	}
 	return nil, nil, "", fmt.Errorf("%w after %d attempts: %v", ErrInvalidToolCall, maxToolBridgeAttempts, lastErr)
 }
@@ -652,7 +652,11 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 	b.WriteString("Task: write the next message of a software agent, as JSON only.\n\n")
 	b.WriteString("The agent is a program running on the user's own computer. The program, not you, executes the functions listed below and sends their results back. ")
 	b.WriteString("Your only job is to read the function list and the conversation, then write the agent's next message as ONE JSON object. You are not asked to run anything yourself.\n\n")
-	b.WriteString("Output exactly one of these shapes and nothing else (no markdown code fences, no text outside the JSON):\n")
+	// Gemini web rewrites HTML-like tags in unfenced text (JSX such as
+	// <Timer at={x} /> comes back as <Timer at="{x}"/>), which corrupts code in
+	// arguments and breaks the JSON with unescaped quotes. Text inside a code
+	// fence is left alone, so the reply is asked for inside one.
+	b.WriteString("Output exactly one of these shapes inside a single ```json code fence, with no text outside the fence:\n")
 	b.WriteString("{\"tool_calls\":[{\"name\":\"<function_name>\",\"arguments\":{\"<parameter>\":<value>}}]}\n")
 	if jsonMode {
 		// The reply itself is JSON: show it as a value, not a string, or the
@@ -712,7 +716,7 @@ func (s *OpenAIService) buildToolBridgePrompt(req dto.ChatCompletionRequest, bas
 
 	b.WriteString("\nConversation so far:\n")
 	b.WriteString(basePrompt)
-	b.WriteString("\n\n(End of conversation.) Write the agent's next message now, as one JSON object in one of the shapes above and nothing else.")
+	b.WriteString("\n\n(End of conversation.) Write the agent's next message now, as one JSON object in one of the shapes above, inside a single ```json code fence and nothing else.")
 	return b.String()
 }
 
@@ -729,6 +733,11 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 
 	payload, ok := decodeToolBridgePayload(cleaned)
 	if !ok {
+		// An attempted tool call that is not valid JSON must not reach the
+		// client as assistant text: the caller retries instead.
+		if toolCallsKey.MatchString(cleaned) {
+			return nil, "", fmt.Errorf("the tool call is not valid JSON (%v); escape every double quote inside strings as \\\"", toolBridgeJSONError(cleaned))
+		}
 		return nil, strings.TrimSpace(text), nil
 	}
 
@@ -783,6 +792,22 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 		content = strings.TrimSpace(text)
 	}
 	return calls, content, nil
+}
+
+// toolCallsKey matches the "tool_calls" key of a bridge reply.
+var toolCallsKey = regexp.MustCompile(`"tool_calls"\s*:`)
+
+// toolBridgeJSONError describes why the JSON object in text does not decode.
+func toolBridgeJSONError(text string) error {
+	obj := utils.ExtractFirstJSONObject(text)
+	if obj == "" {
+		return errors.New("unterminated JSON object")
+	}
+	var v any
+	if err := json.Unmarshal([]byte(utils.EscapeJSONStringControlChars(obj)), &v); err != nil {
+		return err
+	}
+	return errors.New("unexpected JSON shape")
 }
 
 // decodeToolBridgePayload finds the bridge JSON in a reply. It tolerates prose
