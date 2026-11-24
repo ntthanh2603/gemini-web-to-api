@@ -736,7 +736,7 @@ func (s *OpenAIService) parseToolBridgeOutput(req dto.ChatCompletionRequest, tex
 		// An attempted tool call that is not valid JSON must not reach the
 		// client as assistant text: the caller retries instead.
 		if toolCallsKey.MatchString(cleaned) {
-			return nil, "", fmt.Errorf("the tool call is not valid JSON (%v); escape every double quote inside strings as \\\"", toolBridgeJSONError(cleaned))
+			return nil, "", fmt.Errorf("the tool call is not valid JSON (%v); inside JSON strings write a double quote as \\\" and a backslash as \\\\", toolBridgeJSONError(cleaned))
 		}
 		return nil, strings.TrimSpace(text), nil
 	}

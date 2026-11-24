@@ -268,9 +268,12 @@ func ExtractFirstJSONObject(text string) string {
 	return ""
 }
 
-// EscapeJSONStringControlChars escapes raw control characters (such as
-// newlines) that appear inside JSON string literals. LLMs often write
-// multi-line values without escaping them, which encoding/json rejects.
+// EscapeJSONStringControlChars repairs JSON string literals that LLMs often
+// write invalidly and encoding/json rejects:
+//   - raw control characters (such as newlines) are escaped;
+//   - a backslash before a character that cannot follow one in JSON (as in
+//     the shell text \$HOME or \') is kept as a literal backslash, so
+//     the decoded value still contains \$HOME.
 func EscapeJSONStringControlChars(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
@@ -291,6 +294,8 @@ func EscapeJSONStringControlChars(text string) string {
 			continue
 		}
 		switch {
+		case ch == '\\' && !validJSONEscapeAt(text, i+1):
+			b.WriteString(`\\`)
 		case ch == '\\':
 			escaped = true
 			b.WriteByte(ch)
@@ -310,6 +315,29 @@ func EscapeJSONStringControlChars(text string) string {
 		}
 	}
 	return b.String()
+}
+
+// validJSONEscapeAt reports whether text[i:] starts with what may follow a
+// backslash in a JSON string: one of "\\/bfnrt or u and four hex digits.
+func validJSONEscapeAt(text string, i int) bool {
+	if i >= len(text) {
+		return false
+	}
+	switch text[i] {
+	case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+		return true
+	case 'u':
+		if i+5 > len(text) {
+			return false
+		}
+		for _, c := range []byte(text[i+1 : i+5]) {
+			if !strings.ContainsRune("0123456789abcdefABCDEF", rune(c)) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // SleepWithCancel sleeps for the specified duration or until context is cancelled
