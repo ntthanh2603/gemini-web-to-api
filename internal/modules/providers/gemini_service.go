@@ -75,9 +75,13 @@ type Client struct {
 	// refreshOnce starts the refresh loop once, from Init or from the first
 	// cookie push after a failed Init.
 	refreshOnce sync.Once
-	// envCookieHash fingerprints GEMINI_COOKIES, so a pushed session is only
+	// envCookieHash fingerprints GEMINI_COOKIES, so a saved session is only
 	// reused after a restart while GEMINI_COOKIES is unchanged.
 	envCookieHash string
+	// sessionFileMu serializes writes of pushedSessionFile; lastSavedSession
+	// is the content last written, so unchanged sessions are not rewritten.
+	sessionFileMu    sync.Mutex
+	lastSavedSession string
 
 	videoJobsOnce sync.Once
 	videoJobs     *videoJobStore
@@ -162,7 +166,8 @@ func (c *Client) Init(ctx context.Context) error {
 	c.sessionMu.Lock()
 	defer c.sessionMu.Unlock()
 
-	// A session pushed through /admin/cookies replaces GEMINI_COOKIES until
+	// The saved live session (pushed through /admin/cookies, then kept current
+	// with the cookies Google hands out) replaces GEMINI_COOKIES until
 	// GEMINI_COOKIES itself is edited.
 	if pushed, ok := c.loadPushedSession(); ok {
 		c.usePushedSession(pushed)
@@ -232,7 +237,12 @@ func (c *Client) Init(ctx context.Context) error {
 	}
 
 	// Save the valid cookies to cache immediately after successful init
+	c.mu.RLock()
+	liveHeader := c.cookieHeader
+	c.mu.RUnlock()
+	c.syncCookiePair(liveHeader)
 	_ = c.SaveCachedCookies()
+	c.saveLiveSession()
 
 	c.log.Info("✅ Gemini client initialized successfully")
 
@@ -316,29 +326,6 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 		},
 	}
 
-	// Helper to merge cookies into a map to avoid duplicates
-	mergeCookies := func(baseStr string, newCks []*http.Cookie) string {
-		m := make(map[string]string)
-		for _, part := range strings.Split(baseStr, ";") {
-			p := strings.TrimSpace(part)
-			if p == "" {
-				continue
-			}
-			kv := strings.SplitN(p, "=", 2)
-			if len(kv) == 2 {
-				m[kv[0]] = kv[1]
-			}
-		}
-		for _, ck := range newCks {
-			m[ck.Name] = ck.Value
-		}
-		res := []string{}
-		for k, v := range m {
-			res = append(res, fmt.Sprintf("%s=%s", k, v))
-		}
-		return strings.Join(res, "; ")
-	}
-
 	req1, _ := http.NewRequestWithContext(ctx, "GET", "https://gemini.google.com/?hl=en", nil)
 	for k, v := range commonHeaders {
 		req1.Header.Set(k, v)
@@ -346,7 +333,7 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	req1.Header.Set("Cookie", cookieStr)
 	resp1_direct, _ := hClient.Do(req1)
 	if resp1_direct != nil {
-		cookieStr = mergeCookies(cookieStr, resp1_direct.Cookies())
+		cookieStr, _ = applySetCookies(cookieStr, resp1_direct.Cookies())
 		for _, ck := range resp1_direct.Cookies() {
 			c.httpClient.SetCommonCookies(ck)
 		}
@@ -385,7 +372,7 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	body := string(bodyBytes)
 
 	// Merge cookies from the init response into cookieStr
-	cookieStr = mergeCookies(cookieStr, resp.Cookies())
+	cookieStr, _ = applySetCookies(cookieStr, resp.Cookies())
 
 	matches := accessTokenRegex.FindStringSubmatch(body)
 	if len(matches) < 2 {
@@ -434,6 +421,9 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	c.mu.Lock()
 	c.at = matches[1]
 	c.cookieHeader = cookieStr // save full cookie string for use in GenerateContent
+	// The next refresh starts from the cookies Google just handed out, as a
+	// browser would, not from the ones this session started with.
+	c.configuredCookieHeader = cookieStr
 	c.pushID = pushID
 	c.buildLabel = buildLabel
 	c.sessionID = sessionID
@@ -475,6 +465,13 @@ func (c *Client) startAutoRefresh() {
 				c.log.Warn("Gemini session token refresh failed", zap.Error(sessionErr))
 			}
 
+			if sessionErr == nil {
+				c.mu.RLock()
+				liveHeader := c.cookieHeader
+				c.mu.RUnlock()
+				c.syncCookiePair(liveHeader)
+				c.saveLiveSession()
+			}
 			if healthy {
 				c.log.Info("Gemini session refresh completed",
 					zap.Bool("cookie_rotated", rotateErr == nil),
@@ -797,6 +794,8 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			}
 			return nil, lastErr
 		}
+		// Keep the cookies Google refreshes on every answer, as a browser does.
+		c.adoptResponseCookies(cookieHdr, httpResp.Cookies())
 
 		// Video and music jobs may stay silent for minutes; keep them unbounded.
 		firstResponseTimeout, streamIdleTimeout := c.firstResponseTimeout, c.streamIdleTimeout
