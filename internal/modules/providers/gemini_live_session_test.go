@@ -4,12 +4,28 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
 const testEnvCookies = "NID=extra; __Secure-1PSID=" + testCookiePSID + "; __Secure-1PSIDTS=" + testCookieTS
+
+func TestCookieHeaderChangesCarryOverToAnotherHeader(t *testing.T) {
+	before := "A=1; B=2; C=3"
+	after := "A=1; B=9; D=4"
+	got, changed := applySetCookies("X=0; A=1; B=2; C=3", cookieHeaderChanges(before, after))
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if want := "X=0; A=1; B=9; D=4"; got != want {
+		t.Fatalf("header = %q, want %q", got, want)
+	}
+	if changes := cookieHeaderChanges(after, after); len(changes) != 0 {
+		t.Fatalf("changes for an unchanged header = %v, want none", changes)
+	}
+}
 
 func TestApplySetCookies(t *testing.T) {
 	header := "A=1; SIDCC=old; B=2; GONE=x; STALE=y"
@@ -131,7 +147,10 @@ func TestRefreshedEnvSessionSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Fatalf("session file mode = %o, want 600", mode)
+	// os.Chmod on Windows only toggles the read-only bit, so the mode is 0666.
+	if runtime.GOOS != "windows" {
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Fatalf("session file mode = %o, want 600", mode)
+		}
 	}
 }

@@ -19,11 +19,9 @@ import (
 // current and write it to pushedSessionFile, so a restart resumes the session
 // the process was actually using instead of the one it started with.
 
-// applySetCookies returns header with the cookies of a response applied:
-// a new value replaces the old one in place, a new cookie is appended and a
-// deleted cookie (Max-Age <= 0 or an expiry in the past) is removed. changed
-// reports whether the result differs from header.
-func applySetCookies(header string, cookies []*http.Cookie) (string, bool) {
+// parseCookieHeader splits a Cookie header into its cookie names, in order of
+// first appearance, and their values (the last one wins for a repeated name).
+func parseCookieHeader(header string) ([]string, map[string]string) {
 	names := make([]string, 0)
 	values := make(map[string]string)
 	for _, pair := range strings.Split(header, ";") {
@@ -37,6 +35,15 @@ func applySetCookies(header string, cookies []*http.Cookie) (string, bool) {
 		}
 		values[name] = strings.TrimSpace(value)
 	}
+	return names, values
+}
+
+// applySetCookies returns header with the cookies of a response applied:
+// a new value replaces the old one in place, a new cookie is appended and a
+// deleted cookie (Max-Age <= 0 or an expiry in the past) is removed. changed
+// reports whether the result differs from header.
+func applySetCookies(header string, cookies []*http.Cookie) (string, bool) {
+	names, values := parseCookieHeader(header)
 
 	changed := false
 	now := time.Now()
@@ -69,6 +76,27 @@ func applySetCookies(header string, cookies []*http.Cookie) (string, bool) {
 		}
 	}
 	return strings.Join(parts, "; "), changed
+}
+
+// cookieHeaderChanges returns the cookies that turn header before into header
+// after, in the form applySetCookies takes: changed and new cookies with their
+// new value, removed cookies as deletions.
+func cookieHeaderChanges(before, after string) []*http.Cookie {
+	beforeNames, beforeValues := parseCookieHeader(before)
+	afterNames, afterValues := parseCookieHeader(after)
+
+	changes := make([]*http.Cookie, 0)
+	for _, name := range afterNames {
+		if old, ok := beforeValues[name]; !ok || old != afterValues[name] {
+			changes = append(changes, &http.Cookie{Name: name, Value: afterValues[name]})
+		}
+	}
+	for _, name := range beforeNames {
+		if _, ok := afterValues[name]; !ok {
+			changes = append(changes, &http.Cookie{Name: name, MaxAge: -1})
+		}
+	}
+	return changes
 }
 
 // adoptResponseCookies applies the cookies Google set on a response to a

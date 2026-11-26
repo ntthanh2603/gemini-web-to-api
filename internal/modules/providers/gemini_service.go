@@ -298,6 +298,7 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	c.cookies.mu.RUnlock()
 	c.mu.RLock()
 	configuredCookieHeader := c.configuredCookieHeader // replaced by UpdateCookies
+	liveAtStart := c.cookieHeader
 	c.mu.RUnlock()
 	cookieStr := mergeCookieHeaders(extraCookies, configuredCookieHeader,
 		fmt.Sprintf("__Secure-1PSID=%s; __Secure-1PSIDTS=%s", psid, psidts))
@@ -419,6 +420,12 @@ func (c *Client) refreshSessionToken(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
+	// Answers that finished during this refresh may have applied new cookies
+	// to the live header. Carry them over instead of overwriting them.
+	if c.cookieHeader != liveAtStart &&
+		cookieHeaderValue(c.cookieHeader, "__Secure-1PSID") == cookieHeaderValue(cookieStr, "__Secure-1PSID") {
+		cookieStr, _ = applySetCookies(cookieStr, cookieHeaderChanges(liveAtStart, c.cookieHeader))
+	}
 	c.at = matches[1]
 	c.cookieHeader = cookieStr // save full cookie string for use in GenerateContent
 	// The next refresh starts from the cookies Google just handed out, as a
