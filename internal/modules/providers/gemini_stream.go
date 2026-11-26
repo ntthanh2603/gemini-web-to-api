@@ -35,6 +35,7 @@ var defaultErrorReplies = []string{
 	// to GEMINI_MAX_RETRIES extra requests and then surfaces as an error.
 	"I'm having a hard time fulfilling your request. Can I help you with something else instead?",
 	"Something went wrong. Please try again.",
+	"Sorry, something went wrong. Please try your request again.",
 	"Something went wrong.",
 }
 
