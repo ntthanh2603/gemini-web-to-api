@@ -3,10 +3,12 @@ package openai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -240,14 +242,19 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 	}
 
 	imagePrompt := buildImageGenerationPrompt(prompt, req.Size)
-	wantB64 := strings.EqualFold(req.ResponseFormat, "b64_json")
+	// response_format defaults to b64_json: this bridge has no public image
+	// host, so a plain URL cannot be served; b64_json is the one shape every
+	// OpenAI client can consume without extra setup. `url` must be asked for
+	// explicitly and is then served as a data: URL (see imageItem).
+	wantB64 := !strings.EqualFold(req.ResponseFormat, "url")
 	opts := []providers.GenerateOption{}
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}
-	if wantB64 {
-		opts = append(opts, providers.WithGeneratedImageDownload(true))
-	}
+	// Always download the bytes. Gemini's preview URL is not fetchable by
+	// anyone else (302 → 302 → 403 without the server-side cookie chain), so
+	// `url` must be served as a data: URL built from the downloaded bytes.
+	opts = append(opts, providers.WithGeneratedImageDownload(true))
 
 	data := make([]dto.ImageGenerationData, 0, n)
 	for len(data) < n {
@@ -270,14 +277,9 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 			if len(data) >= n {
 				break
 			}
-			item := dto.ImageGenerationData{RevisedPrompt: prompt}
-			if wantB64 {
-				if image.B64JSON == "" {
-					return nil, fmt.Errorf("provider returned image metadata without image bytes")
-				}
-				item.B64JSON = image.B64JSON
-			} else {
-				item.URL = image.URL
+			item, err := imageItem(image, prompt, wantB64)
+			if err != nil {
+				return nil, err
 			}
 			data = append(data, item)
 		}
@@ -287,6 +289,124 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 		Created: time.Now().Unix(),
 		Data:    data,
 	}, nil
+}
+
+// CreateImageGenerationRequestFromMultipart reuses the JSON DTO for multipart
+// bodies: Fiber binds form fields by the `form` tag.
+type ImageEditInput struct {
+	Prompt         string
+	Model          string
+	N              int
+	Size           string
+	ResponseFormat string
+	Files          []providers.InputFile
+}
+
+// CreateImageEdit edits reference images with a text instruction. `n` is clamped
+// to 1..10 like /images/generations; every edit is an independent generation,
+// since Gemini Web has no batch-edit RPC.
+func (s *OpenAIService) CreateImageEdit(ctx context.Context, req ImageEditInput) (*dto.ImageGenerationResponse, error) {
+	n := req.N
+	if n <= 0 {
+		n = 1
+	}
+	if n > 10 {
+		return nil, fmt.Errorf("n must be between 1 and 10")
+	}
+	wantB64 := !strings.EqualFold(req.ResponseFormat, "url")
+
+	data := make([]dto.ImageGenerationData, 0, n)
+	for len(data) < n {
+		result, err := s.client.CreateImageEdit(ctx, providers.ImageEditRequest{
+			Prompt: req.Prompt, Model: req.Model, Size: req.Size, Files: req.Files,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, image := range result.Data {
+			if len(data) >= n {
+				break
+			}
+			item, err := imageItem(image, req.Prompt, wantB64)
+			if err != nil {
+				return nil, err
+			}
+			data = append(data, item)
+		}
+		if len(result.Data) == 0 {
+			return nil, fmt.Errorf("provider returned no edited images")
+		}
+	}
+	return &dto.ImageGenerationResponse{Created: time.Now().Unix(), Data: data}, nil
+}
+
+// CreateMaskedEdit repaints only the transparent region of mask on image,
+// following the instruction. Shares the envelope and n/response_format rules
+// with the other image endpoints.
+func (s *OpenAIService) CreateMaskedEdit(ctx context.Context, req ImageEditInput, mask providers.InputFile, image providers.InputFile) (*dto.ImageGenerationResponse, error) {
+	n := req.N
+	if n <= 0 {
+		n = 1
+	}
+	if n > 10 {
+		return nil, fmt.Errorf("n must be between 1 and 10")
+	}
+	wantB64 := !strings.EqualFold(req.ResponseFormat, "url")
+
+	data := make([]dto.ImageGenerationData, 0, n)
+	for len(data) < n {
+		result, err := s.client.CreateMaskedEdit(ctx, providers.MaskedEditRequest{
+			Prompt: req.Prompt, Model: req.Model, Size: req.Size, Image: image, Mask: mask,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, img := range result.Data {
+			if len(data) >= n {
+				break
+			}
+			item, err := imageItem(img, req.Prompt, wantB64)
+			if err != nil {
+				return nil, err
+			}
+			data = append(data, item)
+		}
+		if len(result.Data) == 0 {
+			return nil, fmt.Errorf("provider returned no edited images")
+		}
+	}
+	return &dto.ImageGenerationResponse{Created: time.Now().Unix(), Data: data}, nil
+}
+
+// imageItem shapes one generated image for the OpenAI response. Both response
+// formats are built from downloaded bytes: `b64_json` as the raw base64, `url`
+// as a data: URL. Handing out Gemini's own preview URL is not an option — it
+// only resolves through the server-side signed chain and 403s for everyone else.
+func imageItem(image providers.Image, revisedPrompt string, wantB64 bool) (dto.ImageGenerationData, error) {
+	if image.B64JSON == "" {
+		return dto.ImageGenerationData{}, fmt.Errorf("provider returned image metadata without image bytes")
+	}
+	item := dto.ImageGenerationData{RevisedPrompt: revisedPrompt}
+	if wantB64 {
+		item.B64JSON = image.B64JSON
+		return item, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(image.B64JSON)
+	if err != nil {
+		return dto.ImageGenerationData{}, fmt.Errorf("decode downloaded image: %w", err)
+	}
+	item.URL = buildDataURL(image.MimeType, raw)
+	return item, nil
+}
+
+// buildDataURL returns an inline data: URL, sniffing the MIME type when the
+// provider did not record one.
+func buildDataURL(mimeType string, raw []byte) string {
+	mimeType = strings.TrimSpace(strings.Split(mimeType, ";")[0])
+	if mimeType == "" || !strings.HasPrefix(mimeType, "image/") {
+		mimeType = http.DetectContentType(raw)
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(raw)
 }
 
 func buildImageGenerationPrompt(prompt, size string) string {

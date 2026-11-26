@@ -85,6 +85,8 @@ type Image struct {
 	Width     int    `json:"width,omitempty"`
 	Height    int    `json:"height,omitempty"`
 	MimeType  string `json:"mime_type,omitempty"`
+	// ImageID is Gemini's image_generation_content/<id> asset identifier.
+	ImageID string `json:"image_id,omitempty"`
 }
 
 // Candidate represents an alternative response
