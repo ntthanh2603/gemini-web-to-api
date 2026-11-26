@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
+	"strings"
 	"time"
 
 	"gemini-web-to-api/internal/commons/configs"
@@ -23,12 +25,16 @@ func NewGeminiWebToAPI(log *zap.Logger, cfg *configs.Config) *fiber.App {
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "x-api-key", "anthropic-version"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "x-api-key", "x-goog-api-key", "anthropic-version"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowCredentials: false,
 	}))
 
 	app.Use(recover.New())
+
+	if cfg.Server.APIKey != "" {
+		app.Use(apiKeyAuth(cfg.Server.APIKey))
+	}
 
 	if cfg.RateLimit.Enabled {
 		app.Use(limiter.New(limiter.Config{
@@ -50,6 +56,49 @@ func HealthCheck(c fiber.Ctx) error {
 		"status":  "ok",
 		"service": "gemini-web-to-api",
 	})
+}
+
+// publicPaths stay reachable without an API key so health checks and the
+// interactive docs keep working when auth is enabled.
+var publicPaths = map[string]bool{
+	"/health":       true,
+	"/docs":         true,
+	"/openapi.json": true,
+}
+
+// apiKeyAuth rejects requests that do not present the configured key. It reads
+// the key from the headers each client SDK sends by default, so OpenAI
+// (Authorization: Bearer), Claude (x-api-key) and Gemini (x-goog-api-key or
+// ?key=) clients work without custom configuration.
+func apiKeyAuth(apiKey string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if publicPaths[c.Path()] {
+			return c.Next()
+		}
+		presented := strings.TrimSpace(c.Get(fiber.HeaderAuthorization))
+		if strings.HasPrefix(presented, "Bearer ") {
+			presented = strings.TrimSpace(strings.TrimPrefix(presented, "Bearer "))
+		}
+		if presented == "" {
+			presented = strings.TrimSpace(c.Get("x-api-key"))
+		}
+		if presented == "" {
+			presented = strings.TrimSpace(c.Get("x-goog-api-key"))
+		}
+		if presented == "" {
+			presented = strings.TrimSpace(c.Query("key"))
+		}
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(apiKey)) != 1 {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": fiber.Map{
+					"type":    "invalid_request_error",
+					"message": "Missing or invalid API key. Set API_KEY on the server and send it as a Bearer token, x-api-key, x-goog-api-key header, or ?key= query parameter.",
+					"code":    "invalid_api_key",
+				},
+			})
+		}
+		return c.Next()
+	}
 }
 
 // Register404Handler registers the 404 handler for unmatched routes
@@ -89,4 +138,3 @@ func RegisterFiberLifecycle(lc fx.Lifecycle, app *fiber.App, cfg *configs.Config
 		},
 	})
 }
-

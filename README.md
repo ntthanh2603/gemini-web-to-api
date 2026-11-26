@@ -226,6 +226,7 @@ Image, video and music generation report no token counts.
 | `GEMINI_ERROR_REPLIES`    | ❌ No    | —       | Extra `\|`-separated canned failure replies to retry instead of returning |
 | `GEMINI_DEBUG_STREAM`     | ❌ No    | —       | Set to `1` to log every StreamGenerate chunk (for capturing new Gemini Web failure shapes) |
 | `PORT`                    | ❌ No    | `4981`  | Server port                                                      |
+| `API_KEY`                 | ❌ No    | —       | Protects every route except `/health`, `/docs`, `/openapi.json`  |
 | `RATE_LIMIT_ENABLED`      | ❌ No    | `false` | Enable or disable rate limiting                                  |
 | `RATE_LIMIT_WINDOW_MS`    | ❌ No    | `60000` | Rate limit time window in milliseconds                           |
 | `RATE_LIMIT_MAX_REQUESTS` | ❌ No    | `10`    | Maximum number of requests allowed per time window               |
@@ -242,6 +243,29 @@ Google may answer with `429`, "unusual traffic" pages or force you to sign in ag
   `RATE_LIMIT_ENABLED=true` with a modest `RATE_LIMIT_MAX_REQUESTS`.
 - If the session starts expiring between rotations (logs show
   `marking client unhealthy`), lower it again or copy a fresh cookie header.
+
+### Protecting the server (`API_KEY`)
+
+By default the server accepts every request, which is fine on localhost but
+not when it listens on a reachable interface: anyone who can reach the port
+can use your Google account through it. Set `API_KEY` to a long random value
+to require it on every route except `/health`, `/docs` and `/openapi.json`.
+
+The key is read from whichever header the client SDK sends by default, so no
+client-side plumbing is needed:
+
+| Client            | How it sends the key                          |
+| ----------------- | --------------------------------------------- |
+| OpenAI SDK        | `Authorization: Bearer <key>`                 |
+| Claude SDK        | `x-api-key: <key>`                            |
+| Gemini SDK        | `x-goog-api-key: <key>` or `?key=<key>`       |
+
+```sh
+curl http://localhost:4981/openai/v1/models -H "Authorization: Bearer $API_KEY"
+```
+
+A missing or wrong key answers `401` with an `invalid_api_key` error. Leave
+`API_KEY` empty to keep the server unauthenticated.
 
 ### Updating cookies from a browser extension (`GEMINI_COOKIE_API_KEY`)
 

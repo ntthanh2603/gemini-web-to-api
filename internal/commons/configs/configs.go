@@ -62,6 +62,9 @@ type OpenAIConfig struct {
 
 type ServerConfig struct {
 	Port string
+	// APIKey, when set, requires clients to authenticate on every route except
+	// the public ones (/health, /docs, /openapi.json). Empty disables auth.
+	APIKey string
 }
 
 const (
@@ -90,6 +93,7 @@ func New() (*Config, error) {
 
 	// Server
 	cfg.Server.Port = getEnv("PORT", defaultServerPort)
+	cfg.Server.APIKey = strings.TrimSpace(os.Getenv("API_KEY"))
 
 	// General
 	cfg.LogLevel = getEnv("LOG_LEVEL", defaultLogLevel)
