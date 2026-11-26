@@ -137,12 +137,14 @@ func TestImagesEditsParsesMultipartAndReturnsOpenAIShape(t *testing.T) {
 	}
 }
 
-// TestImagesEditsReturnsURLWhenRequested covers response_format=url, which the
-// OpenAI SDK also sends; then the url field must be populated and b64_json absent.
+// TestImagesEditsReturnsURLWhenRequested covers response_format=url. The url
+// must be an inline data: URL: the provider's own preview URL is only
+// fetchable through the server-side signed chain and 403s for every client.
 func TestImagesEditsReturnsURLWhenRequested(t *testing.T) {
 	var captured providers.ImageEditRequest
-	app := newImageEditTestApp(t, &captured, &providers.ImageEditResult{Created: 1, Data: []providers.Image{
-		{URL: "https://lh3.googleusercontent.com/gg-dl/y", Generated: true},
+	app := newImageEditTestApp(t, &captured, &providers.ImageEditResult{Data: []providers.Image{
+		{URL: "https://lh3.googleusercontent.com/gg-dl/y", Generated: true, MimeType: "image/png",
+			B64JSON: base64.StdEncoding.EncodeToString([]byte("img-bytes"))},
 	}}, nil)
 	body, ctype := multipartEditBody(t, map[string]string{"prompt": "edit", "response_format": "url"}, map[string][]byte{"image": []byte(testPNG)})
 	req := httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", body)
@@ -157,8 +159,9 @@ func TestImagesEditsReturnsURLWhenRequested(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := out["data"].([]interface{})[0].(map[string]interface{})
-	if data["url"] != "https://lh3.googleusercontent.com/gg-dl/y" {
-		t.Errorf("url = %v", data["url"])
+	url, _ := data["url"].(string)
+	if url != "data:image/png;base64,"+base64.StdEncoding.EncodeToString([]byte("img-bytes")) {
+		t.Errorf("url must be a data: URL carrying the bytes, got %.80q", url)
 	}
 	if _, has := data["b64_json"]; has {
 		t.Errorf("b64_json must be omitted for response_format=url")
@@ -372,5 +375,18 @@ func TestImagesEditsWithMaskRequiresSingleImage(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("want 400 for mask + multiple images, got %d", resp.StatusCode)
+	}
+}
+
+// --- response_format=url must be usable by the caller ---
+
+// buildDataURL is the shape we promise for response_format=url.
+func TestBuildDataURL(t *testing.T) {
+	got := buildDataURL("image/png", []byte{0x89, 0x50})
+	if got != "data:image/png;base64,iVA=" {
+		t.Fatalf("data url = %q", got)
+	}
+	if got := buildDataURL("", []byte{0xff, 0xd8, 0xff}); !strings.HasPrefix(got, "data:image/jpeg;base64,") {
+		t.Fatalf("mime must be sniffed when missing, got %q", got)
 	}
 }

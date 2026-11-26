@@ -3,10 +3,12 @@ package openai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -245,9 +247,10 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
 	}
-	if wantB64 {
-		opts = append(opts, providers.WithGeneratedImageDownload(true))
-	}
+	// Always download the bytes. Gemini's preview URL is not fetchable by
+	// anyone else (302 → 302 → 403 without the server-side cookie chain), so
+	// `url` must be served as a data: URL built from the downloaded bytes.
+	opts = append(opts, providers.WithGeneratedImageDownload(true))
 
 	data := make([]dto.ImageGenerationData, 0, n)
 	for len(data) < n {
@@ -270,14 +273,9 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 			if len(data) >= n {
 				break
 			}
-			item := dto.ImageGenerationData{RevisedPrompt: prompt}
-			if wantB64 {
-				if image.B64JSON == "" {
-					return nil, fmt.Errorf("provider returned image metadata without image bytes")
-				}
-				item.B64JSON = image.B64JSON
-			} else {
-				item.URL = image.URL
+			item, err := imageItem(image, prompt, wantB64)
+			if err != nil {
+				return nil, err
 			}
 			data = append(data, item)
 		}
@@ -325,14 +323,9 @@ func (s *OpenAIService) CreateImageEdit(ctx context.Context, req ImageEditInput)
 			if len(data) >= n {
 				break
 			}
-			item := dto.ImageGenerationData{RevisedPrompt: req.Prompt}
-			if wantB64 {
-				if image.B64JSON == "" {
-					return nil, fmt.Errorf("provider returned image metadata without image bytes")
-				}
-				item.B64JSON = image.B64JSON
-			} else {
-				item.URL = image.URL
+			item, err := imageItem(image, req.Prompt, wantB64)
+			if err != nil {
+				return nil, err
 			}
 			data = append(data, item)
 		}
@@ -368,14 +361,9 @@ func (s *OpenAIService) CreateMaskedEdit(ctx context.Context, req ImageEditInput
 			if len(data) >= n {
 				break
 			}
-			item := dto.ImageGenerationData{RevisedPrompt: req.Prompt}
-			if wantB64 {
-				if img.B64JSON == "" {
-					return nil, fmt.Errorf("provider returned image metadata without image bytes")
-				}
-				item.B64JSON = img.B64JSON
-			} else {
-				item.URL = img.URL
+			item, err := imageItem(img, req.Prompt, wantB64)
+			if err != nil {
+				return nil, err
 			}
 			data = append(data, item)
 		}
@@ -384,6 +372,37 @@ func (s *OpenAIService) CreateMaskedEdit(ctx context.Context, req ImageEditInput
 		}
 	}
 	return &dto.ImageGenerationResponse{Created: time.Now().Unix(), Data: data}, nil
+}
+
+// imageItem shapes one generated image for the OpenAI response. Both response
+// formats are built from downloaded bytes: `b64_json` as the raw base64, `url`
+// as a data: URL. Handing out Gemini's own preview URL is not an option — it
+// only resolves through the server-side signed chain and 403s for everyone else.
+func imageItem(image providers.Image, revisedPrompt string, wantB64 bool) (dto.ImageGenerationData, error) {
+	if image.B64JSON == "" {
+		return dto.ImageGenerationData{}, fmt.Errorf("provider returned image metadata without image bytes")
+	}
+	item := dto.ImageGenerationData{RevisedPrompt: revisedPrompt}
+	if wantB64 {
+		item.B64JSON = image.B64JSON
+		return item, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(image.B64JSON)
+	if err != nil {
+		return dto.ImageGenerationData{}, fmt.Errorf("decode downloaded image: %w", err)
+	}
+	item.URL = buildDataURL(image.MimeType, raw)
+	return item, nil
+}
+
+// buildDataURL returns an inline data: URL, sniffing the MIME type when the
+// provider did not record one.
+func buildDataURL(mimeType string, raw []byte) string {
+	mimeType = strings.TrimSpace(strings.Split(mimeType, ";")[0])
+	if mimeType == "" || !strings.HasPrefix(mimeType, "image/") {
+		mimeType = http.DetectContentType(raw)
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(raw)
 }
 
 func buildImageGenerationPrompt(prompt, size string) string {
