@@ -33,7 +33,7 @@ func NewGeminiWebToAPI(log *zap.Logger, cfg *configs.Config) *fiber.App {
 	app.Use(recover.New())
 
 	if cfg.Server.APIKey != "" {
-		app.Use(apiKeyAuth(cfg.Server.APIKey))
+		app.Use(apiKeyAuth(cfg.Server.APIKey, cfg.Server.APIKeyAlt))
 	}
 
 	if cfg.RateLimit.Enabled {
@@ -70,7 +70,17 @@ var publicPaths = map[string]bool{
 // the key from the headers each client SDK sends by default, so OpenAI
 // (Authorization: Bearer), Claude (x-api-key) and Gemini (x-goog-api-key or
 // ?key=) clients work without custom configuration.
-func apiKeyAuth(apiKey string) fiber.Handler {
+func apiKeyAuth(apiKey, altKey string) fiber.Handler {
+	keyMatches := func(presented string) bool {
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(apiKey)) == 1 {
+			return true
+		}
+		// The admin cookie endpoint authenticates with its own key on the same
+		// header; accept it here so that endpoint stays reachable. The admin
+		// route still verifies its key itself.
+		return altKey != "" && subtle.ConstantTimeCompare([]byte(presented), []byte(altKey)) == 1
+	}
+
 	return func(c fiber.Ctx) error {
 		if publicPaths[c.Path()] {
 			return c.Next()
@@ -88,7 +98,7 @@ func apiKeyAuth(apiKey string) fiber.Handler {
 		if presented == "" {
 			presented = strings.TrimSpace(c.Query("key"))
 		}
-		if subtle.ConstantTimeCompare([]byte(presented), []byte(apiKey)) != 1 {
+		if !keyMatches(presented) {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": fiber.Map{
 					"type":    "invalid_request_error",

@@ -135,3 +135,35 @@ func testRequest(app *fiber.App, method, path, body string) (*http.Response, err
 	}
 	return app.Test(httptest.NewRequest(method, path, reader), testTimeout)
 }
+
+// TestAPIKeyAuthAcceptsAdminCookieKeyForAdminRoute guards against a conflict
+// between the two secrets: /admin/cookies reads GEMINI_COOKIE_API_KEY from the
+// same Authorization header the global middleware checks. Once API_KEY is set
+// the middleware must accept that key too, or the admin endpoint can never be
+// reached. The admin route still verifies its own key afterwards.
+//
+// The config is built through configs.New() because the second key is derived
+// there; hand-building the struct would not exercise the real wiring.
+func TestAPIKeyAuthAcceptsAdminCookieKeyForAdminRoute(t *testing.T) {
+	t.Setenv("API_KEY", "api-key")
+	t.Setenv("GEMINI_COOKIE_API_KEY", "cookie-key")
+	t.Setenv("GEMINI_COOKIES", "__Secure-1PSID=psid; __Secure-1PSIDTS=psidts")
+	cfg, err := configs.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewGeminiWebToAPI(nopLogger(), cfg)
+	app.Post("/admin/cookies", func(c fiber.Ctx) error { return c.SendString("reached admin") })
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/cookies", nil)
+	req.Header.Set("Authorization", "Bearer cookie-key")
+	if resp, _ := app.Test(req, testTimeout); resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin key must pass the global middleware, got %d", resp.StatusCode)
+	}
+	// ...but an unrelated key still must not.
+	req = httptest.NewRequest(http.MethodPost, "/admin/cookies", nil)
+	req.Header.Set("Authorization", "Bearer neither")
+	if resp, _ := app.Test(req, testTimeout); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unknown key must be rejected, got %d", resp.StatusCode)
+	}
+}

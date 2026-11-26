@@ -65,6 +65,9 @@ type ServerConfig struct {
 	// APIKey, when set, requires clients to authenticate on every route except
 	// the public ones (/health, /docs, /openapi.json). Empty disables auth.
 	APIKey string
+	// APIKeyAlt is a second key the global middleware also accepts: it mirrors
+	// GEMINI_COOKIE_API_KEY, whose admin endpoint reads it from the same header.
+	APIKeyAlt string
 }
 
 const (
@@ -136,6 +139,12 @@ func New() (*Config, error) {
 			return nil, fmt.Errorf("invalid GEMINI_AUTH_USER value: %q (must be a non-negative account slot)", cfg.Gemini.AuthUser)
 		}
 	}
+
+	// /admin/cookies authenticates with GEMINI_COOKIE_API_KEY on the same
+	// Authorization header the global API-key middleware checks. Mirror it so
+	// the middleware can accept it too; otherwise the admin endpoint becomes
+	// unreachable once API_KEY is set. Done here, after both are read.
+	cfg.Server.APIKeyAlt = cfg.Gemini.CookieAPIKey
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
