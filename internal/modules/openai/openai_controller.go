@@ -88,6 +88,11 @@ func (h *OpenAIController) logRequestError(msg string, err error, model string) 
 		h.log.Info(msg, zap.Error(err), zap.String("model", model))
 		return
 	}
+	var rejected *providers.RequestRejectedError
+	if errors.As(err, &rejected) && rejected.IsInvalidRequest() {
+		h.log.Warn(msg, zap.Error(err), zap.String("model", model))
+		return
+	}
 	h.log.Error(msg, zap.Error(err), zap.String("model", model))
 }
 
@@ -97,6 +102,11 @@ func openAIRequestError(c fiber.Ctx, err error) error {
 		if modelErr.Unavailable {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(utils.ErrorToResponse(err, "service_unavailable"))
 		}
+		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
+	}
+	var rejected *providers.RequestRejectedError
+	if errors.As(err, &rejected) && rejected.IsInvalidRequest() {
+		// The same request fails on every attempt and every account.
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
 	}
 	if errors.Is(err, ErrInvalidToolCall) {

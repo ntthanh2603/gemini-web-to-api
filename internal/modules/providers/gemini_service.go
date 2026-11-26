@@ -825,6 +825,15 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		if parseErr != nil {
 			parseErr = annotateAttachmentError(parseErr, len(uploadedFiles))
 			lastErr = parseErr
+			var rejected *RequestRejectedError
+			if errors.As(parseErr, &rejected) && !rejected.Retryable() {
+				c.log.Warn("Gemini rejected the request; not retrying",
+					zap.Int("status", rejected.Code),
+					zap.Int("attempt", attempt),
+					zap.Int("prompt_chars", len(prompt)),
+				)
+				return nil, parseErr
+			}
 			c.log.Warn("Failed to parse response, will retry",
 				zap.Error(parseErr),
 				zap.Int("attempt", attempt),
@@ -1145,6 +1154,7 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 	seenAudio := make(map[string]bool)
 	conversationID := ""
 	var labels reasoningLabels
+	var rejected *RequestRejectedError
 
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
@@ -1165,6 +1175,12 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 				// Check for BardErrorInfo error block
 				if errStr := extractBardError(itemArray); errStr != "" {
 					return nil, &bardError{msg: errStr}
+				}
+				// A status in place of an answer. Kept until the end: it is
+				// only the result when no frame carries an answer.
+				if r := extractRequestRejection(itemArray); r != nil {
+					rejected = r
+					continue
 				}
 
 				if len(itemArray) < 3 {
@@ -1319,6 +1335,9 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 		}, nil
 	}
 
+	if rejected != nil {
+		return nil, rejected
+	}
 	sample := text
 	if len(sample) > 500 {
 		sample = sample[:500]
