@@ -343,6 +343,49 @@ func (s *OpenAIService) CreateImageEdit(ctx context.Context, req ImageEditInput)
 	return &dto.ImageGenerationResponse{Created: time.Now().Unix(), Data: data}, nil
 }
 
+// CreateMaskedEdit repaints only the transparent region of mask on image,
+// following the instruction. Shares the envelope and n/response_format rules
+// with the other image endpoints.
+func (s *OpenAIService) CreateMaskedEdit(ctx context.Context, req ImageEditInput, mask providers.InputFile, image providers.InputFile) (*dto.ImageGenerationResponse, error) {
+	n := req.N
+	if n <= 0 {
+		n = 1
+	}
+	if n > 10 {
+		return nil, fmt.Errorf("n must be between 1 and 10")
+	}
+	wantB64 := strings.EqualFold(req.ResponseFormat, "b64_json")
+
+	data := make([]dto.ImageGenerationData, 0, n)
+	for len(data) < n {
+		result, err := s.client.CreateMaskedEdit(ctx, providers.MaskedEditRequest{
+			Prompt: req.Prompt, Model: req.Model, Size: req.Size, Image: image, Mask: mask,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, img := range result.Data {
+			if len(data) >= n {
+				break
+			}
+			item := dto.ImageGenerationData{RevisedPrompt: req.Prompt}
+			if wantB64 {
+				if img.B64JSON == "" {
+					return nil, fmt.Errorf("provider returned image metadata without image bytes")
+				}
+				item.B64JSON = img.B64JSON
+			} else {
+				item.URL = img.URL
+			}
+			data = append(data, item)
+		}
+		if len(result.Data) == 0 {
+			return nil, fmt.Errorf("provider returned no edited images")
+		}
+	}
+	return &dto.ImageGenerationResponse{Created: time.Now().Unix(), Data: data}, nil
+}
+
 func buildImageGenerationPrompt(prompt, size string) string {
 	var b strings.Builder
 	b.WriteString("Generate an image from this prompt. Return the generated image, not only a text description.\n\nPrompt: ")

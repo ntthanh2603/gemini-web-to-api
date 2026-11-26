@@ -70,6 +70,8 @@ type Client struct {
 	// imageEditFn is a test seam for CreateImageEdit; nil uses the real
 	// upload + generate implementation.
 	imageEditFn func(ctx context.Context, req ImageEditRequest) (*ImageEditResult, error)
+	// maskedEditFn is a test seam for CreateMaskedEdit; nil uses the real one.
+	maskedEditFn func(ctx context.Context, req MaskedEditRequest) (*ImageEditResult, error)
 
 	// sessionMu serializes the operations that replace the Gemini session
 	// (Init, the refresh loop and UpdateCookies), so none of them overwrites

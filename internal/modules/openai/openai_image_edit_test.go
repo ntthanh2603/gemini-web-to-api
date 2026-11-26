@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -210,5 +212,165 @@ func TestImagesEditsMapsProviderErrorLikeGenerations(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("want 500 for provider failure (upstream convention), got %d", resp.StatusCode)
+	}
+}
+
+// --- mask (inpainting) ---
+
+// newMaskedEditTestApp captures the provider-level masked request.
+func newMaskedEditTestApp(t *testing.T, capture *providers.MaskedEditRequest, result *providers.ImageEditResult, err error) *fiber.App {
+	t.Helper()
+	client := providers.NewVideoTestClient([]providers.ModelInfo{{ID: "gemini-auto"}}, nil)
+	client.SetMaskedEditFunc(func(_ context.Context, req providers.MaskedEditRequest) (*providers.ImageEditResult, error) {
+		*capture = req
+		return result, err
+	})
+	app := fiber.New()
+	NewOpenAIController(NewOpenAIService(client, zap.NewNop()), zap.NewNop()).Register(app.Group("/openai/v1"))
+	return app
+}
+
+func realPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func multipartWithFiles(t *testing.T, fields map[string]string, files []struct {
+	field, name string
+	data        []byte
+}) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		if err := w.WriteField(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range files {
+		part, err := w.CreateFormFile(f.field, f.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(f.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &buf, w.FormDataContentType()
+}
+
+// TestImagesEditsWithMaskRoutesToMaskedEdit: when a `mask` part is present the
+// request must take the masked path with image and mask kept distinct (they
+// must NOT be flattened into the generic reference list, whose order contract
+// is different), and the result must still be the OpenAI envelope.
+func TestImagesEditsWithMaskRoutesToMaskedEdit(t *testing.T) {
+	var captured providers.MaskedEditRequest
+	app := newMaskedEditTestApp(t, &captured, &providers.ImageEditResult{Data: []providers.Image{
+		{URL: "https://lh3.googleusercontent.com/gg-dl/m", Generated: true, B64JSON: base64.StdEncoding.EncodeToString([]byte("masked"))},
+	}}, nil)
+
+	base := realPNG(t, 16, 12)
+	mask := realPNG(t, 16, 12)
+	body, ctype := multipartWithFiles(t, map[string]string{
+		"prompt":          "Replace the sky with stars",
+		"model":           "gemini-auto",
+		"response_format": "b64_json",
+	}, []struct {
+		field, name string
+		data        []byte
+	}{{"image", "photo.png", base}, {"mask", "mask.png", mask}})
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", body)
+	req.Header.Set("Content-Type", ctype)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, raw)
+	}
+	if string(captured.Image.Data) != string(base) || string(captured.Mask.Data) != string(mask) {
+		t.Errorf("image and mask must arrive intact and distinct")
+	}
+	if captured.Image.Name != "photo.png" || captured.Mask.Name != "mask.png" {
+		t.Errorf("names: image=%q mask=%q", captured.Image.Name, captured.Mask.Name)
+	}
+	if captured.Prompt != "Replace the sky with stars" || captured.Model != "gemini-auto" {
+		t.Errorf("fields: %+v", captured)
+	}
+	var out map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if d := out["data"].([]interface{})[0].(map[string]interface{}); d["b64_json"] == nil {
+		t.Errorf("b64_json missing: %v", d)
+	}
+}
+
+// TestImagesEditsWithMaskRejectsSizeMismatchBeforeProvider: a mask of the wrong
+// size is a client error and must never reach Gemini (uploads are not free).
+func TestImagesEditsWithMaskRejectsSizeMismatchBeforeProvider(t *testing.T) {
+	called := false
+	client := providers.NewVideoTestClient([]providers.ModelInfo{{ID: "gemini-auto"}}, nil)
+	client.SetMaskedEditFunc(func(_ context.Context, req providers.MaskedEditRequest) (*providers.ImageEditResult, error) {
+		called = true
+		return nil, nil
+	})
+	app := fiber.New()
+	NewOpenAIController(NewOpenAIService(client, zap.NewNop()), zap.NewNop()).Register(app.Group("/openai/v1"))
+
+	body, ctype := multipartWithFiles(t, map[string]string{"prompt": "x"}, []struct {
+		field, name string
+		data        []byte
+	}{{"image", "a.png", realPNG(t, 10, 10)}, {"mask", "m.png", realPNG(t, 9, 10)}})
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", body)
+	req.Header.Set("Content-Type", ctype)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 for mask size mismatch, got %d", resp.StatusCode)
+	}
+	if called {
+		t.Errorf("provider must not be called for an invalid mask")
+	}
+}
+
+// TestImagesEditsWithMaskRequiresSingleImage: a mask addresses exactly one base
+// image; several `image` parts plus a mask is ambiguous and must be a 400.
+func TestImagesEditsWithMaskRequiresSingleImage(t *testing.T) {
+	client := providers.NewVideoTestClient([]providers.ModelInfo{{ID: "gemini-auto"}}, nil)
+	client.SetMaskedEditFunc(func(_ context.Context, req providers.MaskedEditRequest) (*providers.ImageEditResult, error) {
+		t.Errorf("provider must not be called")
+		return nil, nil
+	})
+	app := fiber.New()
+	NewOpenAIController(NewOpenAIService(client, zap.NewNop()), zap.NewNop()).Register(app.Group("/openai/v1"))
+	p := realPNG(t, 8, 8)
+	body, ctype := multipartWithFiles(t, map[string]string{"prompt": "x"}, []struct {
+		field, name string
+		data        []byte
+	}{{"image", "a.png", p}, {"image", "b.png", p}, {"mask", "m.png", p}})
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", body)
+	req.Header.Set("Content-Type", ctype)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 for mask + multiple images, got %d", resp.StatusCode)
 	}
 }

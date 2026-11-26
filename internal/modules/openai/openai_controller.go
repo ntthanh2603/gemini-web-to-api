@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -234,7 +236,8 @@ var imageEditPartNames = []string{"image", "image[]", "images", "image_file"}
 // @Tags openai
 // @Accept multipart/form-data
 // @Produce json
-// @Param image formData file true "Reference image (repeat the field for several)"
+// @Param image formData file true "Reference image (repeat the field for several; exactly one when mask is given)"
+// @Param mask formData file false "PNG mask, same size as image; transparent = repaint (optional)"
 // @Param prompt formData string true "Edit instruction"
 // @Param model formData string false "Model"
 // @Param n formData int false "Number of images"
@@ -261,38 +264,72 @@ func (h *OpenAIController) HandleImageEdits(c fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("prompt is required"), "invalid_request_error"))
 	}
 
+	// readPart turns one uploaded file part into an InputFile, sniffing the
+	// type when the writer labelled it generically.
+	readPart := func(fh *multipart.FileHeader, fallbackName string) (providers.InputFile, error) {
+		f, err := fh.Open()
+		if err != nil {
+			return providers.InputFile{}, fmt.Errorf("open %q: %w", fh.Filename, err)
+		}
+		data, err := io.ReadAll(io.LimitReader(f, maxImageEditUploadBytes+1))
+		f.Close()
+		if err != nil {
+			return providers.InputFile{}, fmt.Errorf("read %q: %w", fh.Filename, err)
+		}
+		if len(data) > maxImageEditUploadBytes {
+			return providers.InputFile{}, fmt.Errorf("%q exceeds %d bytes", fh.Filename, maxImageEditUploadBytes)
+		}
+		// Trust the part's Content-Type only when it is a concrete image
+		// type; multipart writers (e.g. Go's CreateFormFile) label file
+		// parts "text/plain" or "application/octet-stream", and Gemini
+		// rejects an upload whose declared type contradicts the bytes.
+		mimeType := strings.TrimSpace(strings.Split(fh.Header.Get("Content-Type"), ";")[0])
+		if !strings.HasPrefix(mimeType, "image/") {
+			mimeType = http.DetectContentType(data)
+		}
+		filename := path.Base(strings.TrimSpace(fh.Filename))
+		if filename == "" || filename == "." {
+			filename = fallbackName + models.ExtensionForMimeType(mimeType)
+		}
+		return providers.InputFile{Name: filename, MimeType: mimeType, Data: data}, nil
+	}
+
+	// Optional mask (OpenAI Images API semantics: transparent = repaint).
+	// It addresses exactly one base image and is validated before upload.
+	var mask *providers.InputFile
+	if parts := form.File["mask"]; len(parts) > 0 {
+		if len(parts) > 1 {
+			return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("mask must be a single file"), "invalid_request_error"))
+		}
+		m, err := readPart(parts[0], "mask")
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
+		}
+		mask = &m
+	}
+
 	files := make([]providers.InputFile, 0, len(form.File))
 	for _, name := range imageEditPartNames {
 		for _, fh := range form.File[name] {
-			f, err := fh.Open()
+			file, err := readPart(fh, fmt.Sprintf("image_%d", len(files)+1))
 			if err != nil {
-				return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("open image %q: %w", fh.Filename, err), "invalid_request_error"))
+				return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
 			}
-			data, err := io.ReadAll(io.LimitReader(f, maxImageEditUploadBytes+1))
-			f.Close()
-			if err != nil {
-				return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("read image %q: %w", fh.Filename, err), "invalid_request_error"))
-			}
-			if len(data) > maxImageEditUploadBytes {
-				return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("image %q exceeds %d bytes", fh.Filename, maxImageEditUploadBytes), "invalid_request_error"))
-			}
-			// Trust the part's Content-Type only when it is a concrete image
-			// type; multipart writers (e.g. Go's CreateFormFile) label file
-			// parts "text/plain" or "application/octet-stream", and Gemini
-			// rejects an upload whose declared type contradicts the bytes.
-			mimeType := strings.TrimSpace(strings.Split(fh.Header.Get("Content-Type"), ";")[0])
-			if !strings.HasPrefix(mimeType, "image/") {
-				mimeType = http.DetectContentType(data)
-			}
-			filename := fh.Filename
-			if filename == "" {
-				filename = fmt.Sprintf("image_%d%s", len(files)+1, models.ExtensionForMimeType(mimeType))
-			}
-			files = append(files, providers.InputFile{Name: filename, MimeType: mimeType, Data: data})
+			files = append(files, file)
 		}
 	}
 	if len(files) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("image is required"), "invalid_request_error"))
+	}
+	if mask != nil {
+		if len(files) != 1 {
+			return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(fmt.Errorf("mask only supports exactly one input image (got %d)", len(files)), "invalid_request_error"))
+		}
+		// Fail before upload: the provider re-checks, but by then the base
+		// image may already have cost an upload and a retry.
+		if err := providers.ValidateMaskPNG(files[0].Data, mask.Data); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(utils.ErrorToResponse(err, "invalid_request_error"))
+		}
 	}
 
 	formValue := func(key string) string {
@@ -321,6 +358,16 @@ func (h *OpenAIController) HandleImageEdits(c fiber.Ctx) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	if mask != nil {
+		response, err := h.service.CreateMaskedEdit(ctx, ImageEditInput{
+			Prompt: prompt, Model: req.Model, N: n, Size: req.Size, ResponseFormat: req.ResponseFormat,
+		}, *mask, files[0])
+		if err != nil {
+			h.logRequestError("CreateMaskedEdit failed", err, req.Model)
+			return openAIRequestError(c, err)
+		}
+		return c.JSON(response)
+	}
 	response, err := h.service.CreateImageEdit(ctx, req)
 	if err != nil {
 		h.logRequestError("CreateImageEdit failed", err, req.Model)
