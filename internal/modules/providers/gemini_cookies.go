@@ -165,6 +165,9 @@ func (c *Client) UpdateCookies(ctx context.Context, cookieHeader string) (Cookie
 	c.mu.Lock()
 	c.configuredCookieHeader = header
 	if probe != nil {
+		// The probe's header already carries the cookies Google set while
+		// checking the session; start later refreshes from it.
+		c.configuredCookieHeader = probe.cookieHeader
 		c.at = probe.at
 		c.pushID = probe.pushID
 		c.buildLabel = probe.buildLabel
@@ -179,7 +182,10 @@ func (c *Client) UpdateCookies(ctx context.Context, cookieHeader string) (Cookie
 	c.healthy = true
 	c.mu.Unlock()
 
-	c.savePushedSession(header, updatedAt)
+	if probe != nil {
+		c.syncCookiePair(probe.cookieHeader)
+	}
+	c.saveLiveSession()
 	// Keep the pushed session rotated even when Init failed and never started
 	// the refresh loop.
 	c.ensureAutoRefresh()
@@ -279,16 +285,21 @@ func cookieFingerprint(psid string) string {
 	return hex.EncodeToString(sum[:])[:cookieFingerprintLen]
 }
 
-// pushedSessionFile keeps the last session pushed through UpdateCookies, next
-// to the __Secure-1PSIDTS cache, so it survives a restart.
+// pushedSessionFile keeps the live session, next to the __Secure-1PSIDTS
+// cache, so it survives a restart. It is written when a session is pushed
+// through UpdateCookies and again whenever Google hands out new cookie values
+// for it (see saveLiveSession).
 var pushedSessionFile = filepath.Join(".cookies", "pushed-session.json")
 
-// pushedSession is the on-disk form of a pushed session. EnvHash is the
-// cookieHeaderHash of GEMINI_COOKIES when the session was pushed.
+// pushedSession is the on-disk form of the live session. EnvHash is the
+// cookieHeaderHash of GEMINI_COOKIES when the session was saved. Source is
+// the CookieStore.Source at that time; files written before it existed are
+// pushed sessions.
 type pushedSession struct {
 	CookieHeader string    `json:"cookie_header"`
 	EnvHash      string    `json:"env_hash"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	Source       string    `json:"source,omitempty"`
 }
 
 // cookieHeaderHash fingerprints a GEMINI_COOKIES value without storing it.
@@ -297,25 +308,10 @@ func cookieHeaderHash(header string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// savePushedSession writes a pushed session to disk. A failure is logged, not
-// returned: the session is already live, only a restart would lose it.
-func (c *Client) savePushedSession(header string, updatedAt time.Time) {
-	data, err := json.Marshal(pushedSession{CookieHeader: header, EnvHash: c.envCookieHash, UpdatedAt: updatedAt})
-	if err == nil {
-		if err = os.MkdirAll(filepath.Dir(pushedSessionFile), 0o755); err == nil {
-			err = os.WriteFile(pushedSessionFile, data, 0o600)
-		}
-	}
-	if err != nil {
-		c.log.Warn("Failed to save the pushed session; a restart will use GEMINI_COOKIES",
-			zap.String("source", CookieSourceAdminAPI), zap.Error(err))
-	}
-}
-
-// loadPushedSession returns the session last pushed through UpdateCookies,
-// provided GEMINI_COOKIES is unchanged since that push. An edited
-// GEMINI_COOKIES means the operator picked a session after the push, so it
-// wins and the pushed one is ignored.
+// loadPushedSession returns the saved live session, provided GEMINI_COOKIES
+// is unchanged since it was saved. An edited GEMINI_COOKIES means the
+// operator picked a session after that, so it wins and the saved one is
+// ignored.
 func (c *Client) loadPushedSession() (pushedSession, bool) {
 	data, err := os.ReadFile(pushedSessionFile)
 	if err != nil {
@@ -332,7 +328,7 @@ func (c *Client) loadPushedSession() (pushedSession, bool) {
 	return pushed, true
 }
 
-// usePushedSession makes a saved pushed session the starting point of Init in
+// usePushedSession makes the saved live session the starting point of Init in
 // place of GEMINI_COOKIES.
 func (c *Client) usePushedSession(pushed pushedSession) {
 	c.mu.Lock()
@@ -343,9 +339,12 @@ func (c *Client) usePushedSession(pushed pushedSession) {
 	c.cookies.Secure1PSID = cleanCookie(cookieHeaderValue(pushed.CookieHeader, "__Secure-1PSID"))
 	c.cookies.Secure1PSIDTS = cleanCookie(cookieHeaderValue(pushed.CookieHeader, "__Secure-1PSIDTS"))
 	c.cookies.UpdatedAt = pushed.UpdatedAt
-	c.cookies.Source = CookieSourceAdminAPI
+	c.cookies.Source = pushed.Source
+	if c.cookies.Source == "" {
+		c.cookies.Source = CookieSourceAdminAPI
+	}
 	c.cookies.mu.Unlock()
 
-	c.log.Info("Using the session pushed through /admin/cookies; GEMINI_COOKIES is unchanged since that push",
-		zap.Time("pushed_at", pushed.UpdatedAt))
+	c.log.Info("Resuming the saved live session; GEMINI_COOKIES is unchanged since it was saved",
+		zap.String("source", pushed.Source), zap.Time("updated_at", pushed.UpdatedAt))
 }
