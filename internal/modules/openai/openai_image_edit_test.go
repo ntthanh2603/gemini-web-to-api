@@ -390,3 +390,44 @@ func TestBuildDataURL(t *testing.T) {
 		t.Fatalf("mime must be sniffed when missing, got %q", got)
 	}
 }
+
+// TestImageEndpointsDefaultToB64JSON pins the default: a client that follows
+// the OpenAI docs and omits response_format must get b64_json, not a url. This
+// bridge cannot serve a public URL, so b64_json is the only shape that works
+// for every client out of the box; `url` is opt-in.
+func TestImageEndpointsDefaultToB64JSON(t *testing.T) {
+	client := providers.NewVideoTestClient([]providers.ModelInfo{{ID: "gemini-auto"}}, nil)
+	called := 0
+	client.SetImageEditFunc(func(_ context.Context, req providers.ImageEditRequest) (*providers.ImageEditResult, error) {
+		called++
+		return &providers.ImageEditResult{Data: []providers.Image{
+			{URL: "https://lh3.googleusercontent.com/gg-dl/x", Generated: true, MimeType: "image/png",
+				B64JSON: base64.StdEncoding.EncodeToString([]byte("bytes"))},
+		}}, nil
+	})
+	app := fiber.New()
+	NewOpenAIController(NewOpenAIService(client, zap.NewNop()), zap.NewNop()).Register(app.Group("/openai/v1"))
+
+	body, ctype := multipartEditBody(t, map[string]string{"prompt": "edit"}, map[string][]byte{"image": []byte(testPNG)})
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/images/edits", body)
+	req.Header.Set("Content-Type", ctype)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	data := out["data"].([]interface{})[0].(map[string]interface{})
+	if _, has := data["b64_json"]; !has {
+		t.Errorf("omitting response_format must yield b64_json, got %v", data)
+	}
+	if _, has := data["url"]; has {
+		t.Errorf("url must be absent unless explicitly requested, got %v", data)
+	}
+	if called != 1 {
+		t.Errorf("provider called %d times", called)
+	}
+}

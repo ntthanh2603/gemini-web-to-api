@@ -242,7 +242,11 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 	}
 
 	imagePrompt := buildImageGenerationPrompt(prompt, req.Size)
-	wantB64 := strings.EqualFold(req.ResponseFormat, "b64_json")
+	// response_format defaults to b64_json: this bridge has no public image
+	// host, so a plain URL cannot be served; b64_json is the one shape every
+	// OpenAI client can consume without extra setup. `url` must be asked for
+	// explicitly and is then served as a data: URL (see imageItem).
+	wantB64 := !strings.EqualFold(req.ResponseFormat, "url")
 	opts := []providers.GenerateOption{}
 	if req.Model != "" {
 		opts = append(opts, providers.WithModel(req.Model))
@@ -309,7 +313,7 @@ func (s *OpenAIService) CreateImageEdit(ctx context.Context, req ImageEditInput)
 	if n > 10 {
 		return nil, fmt.Errorf("n must be between 1 and 10")
 	}
-	wantB64 := strings.EqualFold(req.ResponseFormat, "b64_json")
+	wantB64 := !strings.EqualFold(req.ResponseFormat, "url")
 
 	data := make([]dto.ImageGenerationData, 0, n)
 	for len(data) < n {
@@ -347,7 +351,7 @@ func (s *OpenAIService) CreateMaskedEdit(ctx context.Context, req ImageEditInput
 	if n > 10 {
 		return nil, fmt.Errorf("n must be between 1 and 10")
 	}
-	wantB64 := strings.EqualFold(req.ResponseFormat, "b64_json")
+	wantB64 := !strings.EqualFold(req.ResponseFormat, "url")
 
 	data := make([]dto.ImageGenerationData, 0, n)
 	for len(data) < n {
