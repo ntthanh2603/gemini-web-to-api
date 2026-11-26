@@ -67,6 +67,9 @@ type Client struct {
 	// sessionValidator is a test seam for UpdateCookies; nil uses the real
 	// Google session check.
 	sessionValidator func(ctx context.Context, cookieHeader string) error
+	// imageEditFn is a test seam for CreateImageEdit; nil uses the real
+	// upload + generate implementation.
+	imageEditFn func(ctx context.Context, req ImageEditRequest) (*ImageEditResult, error)
 
 	// sessionMu serializes the operations that replace the Gemini session
 	// (Init, the refresh loop and UpdateCookies), so none of them overwrites

@@ -289,6 +289,60 @@ func (s *OpenAIService) CreateImageGeneration(ctx context.Context, req dto.Image
 	}, nil
 }
 
+// CreateImageGenerationRequestFromMultipart reuses the JSON DTO for multipart
+// bodies: Fiber binds form fields by the `form` tag.
+type ImageEditInput struct {
+	Prompt         string
+	Model          string
+	N              int
+	Size           string
+	ResponseFormat string
+	Files          []providers.InputFile
+}
+
+// CreateImageEdit edits reference images with a text instruction. `n` is clamped
+// to 1..10 like /images/generations; every edit is an independent generation,
+// since Gemini Web has no batch-edit RPC.
+func (s *OpenAIService) CreateImageEdit(ctx context.Context, req ImageEditInput) (*dto.ImageGenerationResponse, error) {
+	n := req.N
+	if n <= 0 {
+		n = 1
+	}
+	if n > 10 {
+		return nil, fmt.Errorf("n must be between 1 and 10")
+	}
+	wantB64 := strings.EqualFold(req.ResponseFormat, "b64_json")
+
+	data := make([]dto.ImageGenerationData, 0, n)
+	for len(data) < n {
+		result, err := s.client.CreateImageEdit(ctx, providers.ImageEditRequest{
+			Prompt: req.Prompt, Model: req.Model, Size: req.Size, Files: req.Files,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, image := range result.Data {
+			if len(data) >= n {
+				break
+			}
+			item := dto.ImageGenerationData{RevisedPrompt: req.Prompt}
+			if wantB64 {
+				if image.B64JSON == "" {
+					return nil, fmt.Errorf("provider returned image metadata without image bytes")
+				}
+				item.B64JSON = image.B64JSON
+			} else {
+				item.URL = image.URL
+			}
+			data = append(data, item)
+		}
+		if len(result.Data) == 0 {
+			return nil, fmt.Errorf("provider returned no edited images")
+		}
+	}
+	return &dto.ImageGenerationResponse{Created: time.Now().Unix(), Data: data}, nil
+}
+
 func buildImageGenerationPrompt(prompt, size string) string {
 	var b strings.Builder
 	b.WriteString("Generate an image from this prompt. Return the generated image, not only a text description.\n\nPrompt: ")
