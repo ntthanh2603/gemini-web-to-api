@@ -667,51 +667,58 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 		return nil, err
 	}
 
-	requestID := strings.ToUpper(uuid.NewString())
-	inner := buildGenerateInner(prompt, uploadedFiles, selectedModel.ModelNumber, language, requestID, c.defaultTemporary)
-	inner[80] = thinkingLevel
-	if metadata != nil {
-		inner[2] = metadata
-	}
-	modelHeaders, err := buildGeminiModelHeaders(selectedModel, requestID, generationID, thinkingLevel)
-	if err != nil {
-		return nil, err
-	}
-	if config.Video != nil {
-		inner = applyVideoInner(inner, config.Video.AspectRatio)
-	} else if config.Music != nil {
-		inner = applyMusicInner(inner, *config.Music)
-	} else if config.Canvas {
-		inner = applyCanvasInner(inner)
-	}
-	if config.Video != nil || config.Music != nil || config.Canvas {
-		if err := applyWebToolModelHeader(modelHeaders); err != nil {
-			return nil, err
+	// buildAttempt builds one generate request. It runs for every attempt, so a
+	// retry carries a fresh request UUID and _reqid like the web UI's Redo,
+	// instead of resending a byte-identical request that Google may still hold
+	// as stuck.
+	buildAttempt := func() (formBody, generateURL string, modelHeaders map[string]string, err error) {
+		requestID := strings.ToUpper(uuid.NewString())
+		inner := buildGenerateInner(prompt, uploadedFiles, selectedModel.ModelNumber, language, requestID, c.defaultTemporary)
+		inner[80] = thinkingLevel
+		if metadata != nil {
+			inner[2] = metadata
 		}
-	}
+		modelHeaders, err = buildGeminiModelHeaders(selectedModel, requestID, generationID, thinkingLevel)
+		if err != nil {
+			return "", "", nil, err
+		}
+		if config.Video != nil {
+			inner = applyVideoInner(inner, config.Video.AspectRatio)
+		} else if config.Music != nil {
+			inner = applyMusicInner(inner, *config.Music)
+		} else if config.Canvas {
+			inner = applyCanvasInner(inner)
+		}
+		if config.Video != nil || config.Music != nil || config.Canvas {
+			if err := applyWebToolModelHeader(modelHeaders); err != nil {
+				return "", "", nil, err
+			}
+		}
 
-	innerJSON, _ := json.Marshal(inner)
-	outer := []interface{}{nil, string(innerJSON)}
-	outerJSON, _ := json.Marshal(outer)
+		innerJSON, _ := json.Marshal(inner)
+		outer := []interface{}{nil, string(innerJSON)}
+		outerJSON, _ := json.Marshal(outer)
 
-	// Encode form body manually to have full control over the request
-	formValues := url.Values{}
-	formValues.Set("at", at)
-	formValues.Set("f.req", string(outerJSON))
-	formBody := formValues.Encode()
+		// Encode form body manually to have full control over the request
+		formValues := url.Values{}
+		formValues.Set("at", at)
+		formValues.Set("f.req", string(outerJSON))
+		formBody = formValues.Encode()
 
-	queryValues := url.Values{}
-	queryValues.Set("at", at)
-	queryValues.Set("hl", language)
-	queryValues.Set("_reqid", fmt.Sprintf("%d", rand.Intn(90000)+10000))
-	queryValues.Set("rt", "c")
-	if buildLabel != "" {
-		queryValues.Set("bl", buildLabel)
+		queryValues := url.Values{}
+		queryValues.Set("at", at)
+		queryValues.Set("hl", language)
+		queryValues.Set("_reqid", fmt.Sprintf("%d", rand.Intn(90000)+10000))
+		queryValues.Set("rt", "c")
+		if buildLabel != "" {
+			queryValues.Set("bl", buildLabel)
+		}
+		if sessionID != "" {
+			queryValues.Set("f.sid", sessionID)
+		}
+		generateURL = geminiAccountURL(EndpointGenerate, c.authUser) + "?" + queryValues.Encode()
+		return formBody, generateURL, modelHeaders, nil
 	}
-	if sessionID != "" {
-		queryValues.Set("f.sid", sessionID)
-	}
-	generateURL := geminiAccountURL(EndpointGenerate, c.authUser) + "?" + queryValues.Encode()
 
 	maxAttempts := c.maxRetries
 	// A retried video/music request could start (and bill) a second generation.
@@ -739,6 +746,11 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
+		}
+
+		formBody, generateURL, modelHeaders, err := buildAttempt()
+		if err != nil {
+			return nil, err
 		}
 
 		httpStart := time.Now()
