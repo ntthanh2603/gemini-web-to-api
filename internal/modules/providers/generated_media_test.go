@@ -136,3 +136,75 @@ func TestReadGeneratedImageBodyRejectsOversize(t *testing.T) {
 		t.Fatal("test fixture was not oversized")
 	}
 }
+
+func TestExtractGeneratedImagesReadsImageIDAndToleratesMissingSlot(t *testing.T) {
+	// Real Gemini Web responses carry the image_generation_content id at
+	// imageNode[1][0]; it is what the full-size download RPC needs.
+	meta := []interface{}{nil, float64(1), "generated.png", "https://lh3.googleusercontent.com/generated-image", nil, "image/png"}
+	otherMeta := []interface{}{nil, float64(1), "second.png", "https://lh3.googleusercontent.com/second-image", nil, "image/png"}
+	withID := []interface{}{[]interface{}{nil, nil, nil, meta}, []interface{}{"0_1050", 0}}
+	withoutID := []interface{}{[]interface{}{nil, nil, nil, otherMeta}}
+	slot := make([]interface{}, 8)
+	slot[7] = []interface{}{[]interface{}{withID, withoutID}}
+	candidate := make([]interface{}, 13)
+	candidate[12] = slot
+
+	got := extractGeneratedImages(candidate)
+	if len(got) != 2 {
+		t.Fatalf("expected two generated images, got %d", len(got))
+	}
+	if got[0].ImageID != "0_1050" {
+		t.Fatalf("image id not read: %q", got[0].ImageID)
+	}
+	if got[1].ImageID != "" {
+		t.Fatalf("missing id slot must not panic or invent an id: %q", got[1].ImageID)
+	}
+}
+
+func TestScopedCookieForHostFollowsBrowserDomainRules(t *testing.T) {
+	main := "SID=x; __Secure-1PSID=y"
+	osid := "OSID=a; __Secure-OSID=b"
+	cases := map[string]string{
+		"lh3.googleusercontent.com":           osid,
+		"work.fife.usercontent.google.com":    main,
+		"lh3.google.com":                      main,
+		"contribution.usercontent.google.com": main,
+	}
+	for host, want := range cases {
+		if got := scopedCookieForHost(host, main, osid); got != want {
+			t.Errorf("scopedCookieForHost(%q) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+func TestSplitScopedCookiesSeparatesOSIDPair(t *testing.T) {
+	header := "SID=x; OSID=a; __Secure-1PSID=y; __Secure-OSID=b; NID=c"
+	main, osid := splitScopedCookies(header)
+	if osid != "OSID=a; __Secure-OSID=b" {
+		t.Fatalf("osid set = %q", osid)
+	}
+	for _, want := range []string{"SID=x", "__Secure-1PSID=y", "NID=c"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("main set %q missing %q", main, want)
+		}
+	}
+	if strings.Contains(main, "OSID") {
+		t.Fatalf("main set must not contain OSID cookies: %q", main)
+	}
+}
+
+func TestBuildDownloadEntryURLAddsWebUIDownloadMarkers(t *testing.T) {
+	got, err := buildDownloadEntryURL("https://lh3.googleusercontent.com/gg-dl/abc", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "https://lh3.googleusercontent.com/gg-dl/abc=d-I?") {
+		t.Fatalf("entry url missing =d-I marker: %q", got)
+	}
+	if !strings.Contains(got, "alr=yes") || !strings.Contains(got, "authuser=6") {
+		t.Fatalf("entry url missing alr/authuser: %q", got)
+	}
+	if got, _ = buildDownloadEntryURL("https://lh3.googleusercontent.com/gg-dl/abc", ""); strings.Contains(got, "authuser") {
+		t.Fatalf("no account slot must not add authuser: %q", got)
+	}
+}
