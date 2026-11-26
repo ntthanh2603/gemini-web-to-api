@@ -110,6 +110,7 @@ var (
 	pushIDRegex              = regexp.MustCompile(`"qKIAYe":"([^"]+)"`)
 	buildLabelRegex          = regexp.MustCompile(`"cfb2h":"([^"]+)"`)
 	sessionIDRegex           = regexp.MustCompile(`"FdrFJe":"([^"]+)"`)
+	nextURLRegex             = regexp.MustCompile(`(https://[A-Za-z0-9.\-]+/[^\s"'<>\\]+)`)
 	languageRegex            = regexp.MustCompile(`"TuX5cc":"([^"]+)"`)
 	imageURLRegex            = regexp.MustCompile(`(?i)(?:https?:)?//[^\s"'<>\\]+|(?:[a-z0-9.-]+\.)?googleusercontent\.com/[^\s"'<>\\]+`)
 )
@@ -891,7 +892,13 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
 				if !result.Images[i].Generated {
 					continue
 				}
-				encoded, downloadErr := c.downloadGeneratedImage(ctx, result.Images[i].URL, cookieHdr)
+				// Preferred path: signed download chain with domain-scoped cookies;
+				// falls back to the legacy direct-URL download.
+				encoded, downloadErr := c.downloadGeneratedImageFullSize(ctx, result.Images[i], cookieHdr)
+				if downloadErr != nil {
+					c.log.Warn("Full-size generated image download failed, falling back to direct URL", zap.Error(downloadErr))
+					encoded, downloadErr = c.downloadGeneratedImage(ctx, result.Images[i].URL, cookieHdr)
+				}
 				if downloadErr != nil {
 					c.log.Warn("Failed to download generated image", zap.Error(downloadErr))
 					continue
@@ -949,6 +956,115 @@ func generatedImageHTTPClient(cookieHeader string) *http.Client {
 			return nil
 		},
 	}
+}
+
+// splitScopedCookies mirrors how a browser scopes cookies per host. The signed
+// download chain is domain-sensitive: *.googleusercontent.com media hosts only
+// accept the OSID pair, while google.com hosts (including work.fife's
+// usercontent.google.com) carry the main session cookies. Sending the wrong
+// set breaks the signature chain (HTTP 403).
+func splitScopedCookies(cookieHeader string) (mainSet, osidSet string) {
+	pairs := strings.Split(cookieHeader, "; ")
+	var goPairs, ucPairs []string
+	for _, p := range pairs {
+		name := p
+		if idx := strings.Index(p, "="); idx >= 0 {
+			name = p[:idx]
+		}
+		switch name {
+		case "OSID", "__Secure-OSID":
+			ucPairs = append(ucPairs, p)
+		default:
+			goPairs = append(goPairs, p)
+		}
+	}
+	return strings.Join(goPairs, "; "), strings.Join(ucPairs, "; ")
+}
+
+// scopedCookieForHost picks the cookie set a real browser would send to host.
+func scopedCookieForHost(host, mainSet, osidSet string) string {
+	if strings.HasSuffix(host, "googleusercontent.com") && !strings.HasSuffix(host, "usercontent.google.com") {
+		return osidSet
+	}
+	return mainSet
+}
+
+// buildDownloadEntryURL appends the web UI's download markers to a generated
+// image URL: "=d-I" plus alr=yes and the account slot when configured.
+func buildDownloadEntryURL(rawURL, authUser string) (string, error) {
+	u, err := url.Parse(rawURL + "=d-I")
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("alr", "yes")
+	if authUser != "" {
+		q.Set("authuser", authUser)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// downloadGeneratedImageChain follows Google's signed download chain for a
+// generated image. Hops answer 200 text/plain embedding the next signed URL
+// until one answers the actual image bytes. Cookies are re-scoped per hop by
+// target host, matching browser behavior.
+func (c *Client) downloadGeneratedImageChain(ctx context.Context, entryURL, cookieHeader string) (string, error) {
+	mainSet, osidSet := splitScopedCookies(cookieHeader)
+	url := entryURL
+	for hop := 0; hop < 8; hop++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Referer", "https://gemini.google.com/")
+		// Scope cookies per hop host, matching browser behavior; the scoped set
+		// is re-applied to redirects by generatedImageHTTPClient, mirroring how
+		// curl -L re-sends the same header along a redirect chain.
+		scoped := scopedCookieForHost(req.URL.Hostname(), mainSet, osidSet)
+		if scoped != "" {
+			req.Header.Set("Cookie", scoped)
+		}
+		client := generatedImageHTTPClient(scoped)
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxGeneratedImageBytes+1))
+		ct := resp.Header.Get("Content-Type")
+		resp.Body.Close()
+		if readErr != nil {
+			return "", readErr
+		}
+		if strings.HasPrefix(ct, "image/") {
+			if len(body) > maxGeneratedImageBytes {
+				return "", fmt.Errorf("generated image exceeds %d byte limit", maxGeneratedImageBytes)
+			}
+			return base64.StdEncoding.EncodeToString(body), nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("download chain hop %d returned %d %s", hop, resp.StatusCode, ct)
+		}
+		next := nextURLRegex.FindSubmatch(body)
+		if next == nil {
+			return "", fmt.Errorf("download chain hop %d carries no next URL (%s)", hop, ct)
+		}
+		url = string(next[1])
+	}
+	return "", fmt.Errorf("download chain exceeded 8 hops")
+}
+
+// downloadGeneratedImageFullSize builds the web UI's download entry from the
+// chat-response URL and follows the signed chain to fetch the image bytes.
+// The URL from the generation response is a preview; appending "=d-I" (plus
+// authuser/alr) starts the same redirect chain the web UI uses for downloads.
+func (c *Client) downloadGeneratedImageFullSize(ctx context.Context, image Image, cookieHeader string) (string, error) {
+	entry, err := buildDownloadEntryURL(image.URL, c.authUser)
+	if err != nil {
+		return "", err
+	}
+	return c.downloadGeneratedImageChain(ctx, entry, cookieHeader)
 }
 
 func (c *Client) downloadGeneratedImage(ctx context.Context, rawURL, cookieHeader string) (string, error) {
@@ -1276,8 +1392,22 @@ func (c *Client) parseResponse(text string) (*Response, error) {
 										}
 									}
 									if len(payload) > 1 {
-										if id, ok := payload[1].(string); ok {
-											cid = id
+										// payload[1] carries the conversation id, either as a plain
+										// string or as the metadata array [cid, rid].
+										switch meta := payload[1].(type) {
+										case string:
+											cid = meta
+										case []interface{}:
+											if len(meta) > 0 {
+												if id, ok := meta[0].(string); ok && id != "" {
+													cid = id
+												}
+											}
+											if len(meta) > 1 {
+												if id, ok := meta[1].(string); ok && id != "" {
+													rid = id
+												}
+											}
 										}
 									}
 
@@ -1576,6 +1706,15 @@ func extractGeneratedImages(candidate []interface{}) []Image {
 			continue
 		}
 		image := Image{URL: normalizeImageURL(imageURL), MimeType: "image/png", Generated: true}
+		// imageID lives at imageNode[1][0] (e.g. "0_1050"). It identifies the
+		// generated asset and is exposed for callers that need it.
+		if len(imageNode) > 1 {
+			if idNode, ok := imageNode[1].([]interface{}); ok && len(idNode) > 0 {
+				if id, ok := idNode[0].(string); ok && id != "" {
+					image.ImageID = id
+				}
+			}
+		}
 		if filename, ok := metadata[2].(string); ok {
 			image.Title = filename
 		}
